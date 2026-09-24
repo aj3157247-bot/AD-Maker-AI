@@ -856,12 +856,28 @@ async function renderVideo(voiceBlob) {
         }
         const ew = el.videoWidth || el.naturalWidth || W;
         const eh = el.videoHeight || el.naturalHeight || H;
+
+        // Keep the entire source visible. The previous `cover` scaling could crop
+        // a large portion of vertical/horizontal media (especially phone videos).
+        // Fill the canvas with a soft backdrop first, then fit the complete media
+        // inside the output frame without cutting its edges.
         const cover = Math.max(W / ew, H / eh);
-        const zoom = 1.04 + 0.055 * sceneP;
-        const iw = ew * cover * zoom, ih = eh * cover * zoom;
-        const drift = Math.sin(sceneP * Math.PI) * 12;
+        const bgW = ew * cover, bgH = eh * cover;
+        ctx.save();
+        ctx.globalAlpha = 0.34;
+        ctx.filter = "blur(24px) brightness(.55) saturate(1.08)";
+        ctx.drawImage(el, (W - bgW) / 2, (H - bgH) / 2, bgW, bgH);
+        ctx.restore();
+
+        const fit = Math.min(W / ew, H / eh);
+        const zoom = 0.96 + 0.025 * sceneP;
+        const iw = ew * fit * zoom, ih = eh * fit * zoom;
+        const drift = Math.sin(sceneP * Math.PI) * Math.min(8, W * 0.01);
+        const ix = (W - iw) / 2 + drift;
+        const iy = (H - ih) / 2;
         ctx.globalAlpha = 1;
-        ctx.drawImage(el, (W - iw) / 2 + drift, (H - ih) / 2, iw, ih);
+        ctx.filter = "none";
+        ctx.drawImage(el, ix, iy, iw, ih);
       } else {
         const g = ctx.createLinearGradient(0, 0, W, H);
         g.addColorStop(0, state.brandColor); g.addColorStop(1, "#090912");
