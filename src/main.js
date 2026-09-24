@@ -380,7 +380,12 @@ async function renderVideo(voiceBlob) {
 
     if (kind === "image") {
       const im = await loadImageFile(f, objectUrl);
-      media.push({ type: "image", el: im, name: f.name, duration: 1 });
+      if (im) {
+        media.push({ type: "image", el: im, name: f.name, duration: 1 });
+      } else {
+        media.push({ type: "fallback", el: null, name: f.name, duration: 1 });
+        log(`تصویر «${f.name}» توسط Chrome قابل رمزگشایی نبود؛ این صحنه با کارت تبلیغاتی جایگزین شد.`, "error");
+      }
       continue;
     }
 
@@ -482,19 +487,17 @@ async function renderVideo(voiceBlob) {
       ctx.fillStyle = "#050507";
       ctx.fillRect(0, 0, W, H);
 
-      if (item) {
+      if (item && item.el) {
         const el = item.el;
         if (item.type === "video") {
           const duration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : item.duration;
           const sceneP = (p * media.length) % 1;
           const target = Math.min(Math.max(0, sceneP * duration), Math.max(0, duration - 0.05));
-          // Keep the video moving while it is used as a scene.
           if (Math.abs((el.currentTime || 0) - target) > 0.20) {
             try { el.currentTime = target; } catch (_) {}
           }
           if (el.paused) el.play().catch(() => {});
         }
-
         const ew = el.videoWidth || el.naturalWidth || W;
         const eh = el.videoHeight || el.naturalHeight || H;
         const cover = Math.max(W / ew, H / eh);
@@ -506,6 +509,23 @@ async function renderVideo(voiceBlob) {
         ctx.globalAlpha = 0.96;
         ctx.drawImage(el, (W - iw) / 2 + drift, (H - ih) / 2, iw, ih);
         ctx.globalAlpha = 1;
+      } else {
+        // Fallback scene keeps the project renderable when Android exposes a
+        // virtual/unsupported gallery image. Audio and the rest of the ad are
+        // still rendered normally.
+        const g = ctx.createLinearGradient(0, 0, W, H);
+        g.addColorStop(0, state.brandColor);
+        g.addColorStop(1, "#07070b");
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "rgba(255,255,255,.10)";
+        ctx.fillRect(55, 340, W - 110, 470);
+        ctx.fillStyle = "#fff";
+        ctx.font = "900 58px Vazirmatn,Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(brand, W / 2, 525);
+        ctx.font = "600 27px Vazirmatn,Arial";
+        ctx.fillStyle = "rgba(255,255,255,.78)";
+        ctx.fillText("تبلیغ حرفه‌ای با AD Maker AI", W / 2, 590);
       }
 
       // Cinematic overlays and a visible progress animation make a single image behave like a real video scene.
@@ -628,50 +648,61 @@ async function sniffMediaType(file) {
 }
 
 async function loadImageFile(file, objectUrl) {
-  // First try createImageBitmap: it is generally more reliable with Android
-  // File/Blob objects and avoids filename/MIME quirks.
-  if (window.createImageBitmap) {
-    try {
-      const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-      const c = document.createElement("canvas");
-      c.width = bitmap.width; c.height = bitmap.height;
-      c.getContext("2d").drawImage(bitmap, 0, 0);
-      bitmap.close?.();
-      const img = new Image();
-      img.src = c.toDataURL("image/png");
-      await waitForImage(img, file?.name || "فایل");
-      return img;
-    } catch (_) {}
-  }
+  const name = file?.name || "فایل";
+  let bytes = null;
+  try { bytes = await file.arrayBuffer(); } catch (_) {}
 
-  // Force a correct MIME from the file signature. This fixes Samsung/Android
-  // gallery names such as jpg.1000052843 where File.type is empty.
+  // Newer Android Chrome: decode from bytes with WebCodecs when available.
   try {
-    const kind = await sniffMediaType(file);
-    const mime = kind === "image" ? await sniffImageMime(file) : null;
-    const blob = mime ? new Blob([await file.arrayBuffer()], { type: mime }) : file;
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    img.decoding = "async";
-    img.src = url;
-    await waitForImage(img, file?.name || "فایل");
-    try { URL.revokeObjectURL(url); } catch (_) {}
-    return img;
+    if (bytes && "ImageDecoder" in window) {
+      const mime = await sniffImageMime(file);
+      if (mime) {
+        const decoder = new ImageDecoder({ data: bytes, type: mime });
+        const result = await decoder.decode({ frameIndex: 0 });
+        const frame = result.image;
+        const c = document.createElement("canvas");
+        c.width = frame.displayWidth || frame.codedWidth;
+        c.height = frame.displayHeight || frame.codedHeight;
+        c.getContext("2d").drawImage(frame, 0, 0);
+        frame.close?.(); decoder.close?.();
+        const img = new Image(); img.src = c.toDataURL("image/png");
+        await waitForImage(img, name); return img;
+      }
+    }
   } catch (_) {}
 
-  // Final data-URL fallback.
   try {
-    const dataUrl = await fileToDataUrl(file);
-    const img = new Image();
-    img.decoding = "async";
-    img.src = dataUrl;
-    await waitForImage(img, file?.name || "فایل");
-    return img;
-  } catch (_) {
-    throw new Error(`خواندن تصویر «${file?.name || "فایل"}» ناموفق بود. اگر عکس از گالری سامسونگ است، آن را به JPG یا PNG تبدیل و دوباره انتخاب کن.`);
-  }
-}
+    if (window.createImageBitmap) {
+      const bitmap = await createImageBitmap(file);
+      const c = document.createElement("canvas"); c.width = bitmap.width; c.height = bitmap.height;
+      c.getContext("2d").drawImage(bitmap, 0, 0); bitmap.close?.();
+      const img = new Image(); img.src = c.toDataURL("image/png");
+      await waitForImage(img, name); return img;
+    }
+  } catch (_) {}
 
+  try {
+    const mime = await sniffImageMime(file);
+    if (mime && bytes) {
+      const blob = new Blob([bytes], { type: mime });
+      const url = URL.createObjectURL(blob); const img = new Image();
+      img.decoding = "async"; img.src = url; await waitForImage(img, name);
+      URL.revokeObjectURL(url); return img;
+    }
+  } catch (_) {}
+
+  try {
+    const img = new Image(); img.decoding = "async"; img.src = objectUrl;
+    await waitForImage(img, name); return img;
+  } catch (_) {}
+
+  try {
+    const dataUrl = await fileToDataUrl(file); const img = new Image();
+    img.decoding = "async"; img.src = dataUrl; await waitForImage(img, name); return img;
+  } catch (_) {}
+
+  return null;
+}
 async function sniffImageMime(file) {
   try {
     const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
