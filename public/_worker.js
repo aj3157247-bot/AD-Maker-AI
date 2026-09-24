@@ -200,8 +200,8 @@ For the script: narrate the actual sequence of the video so the voice matches wh
     // models here; never use Gemini 2.5 fallbacks.
     // Prefer models that may still have daily quota available. Do not burn the
     // remaining quota by retrying a daily-quota 429 on the same model.
-    const agenticModels = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"];
-    const staticModels = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"];
+    const agenticModels = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.8-flash"];
+    const staticModels = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.8-flash"];
     // Use the exact URI returned by Gemini Files API. Never manufacture or
     // rewrite a URI here: blob:// URIs are browser-internal and are rejected by
     // Interactions API. Small videos bypass this endpoint entirely via the inline
@@ -268,7 +268,7 @@ For the script: narrate the actual sequence of the video so the voice matches wh
 
     async function tryCreate(models, processing) {
       for (const model of models) {
-        for (let attempt = 1; attempt <= 2; attempt += 1) {
+        for (let attempt = 1; attempt <= 1; attempt += 1) {
           attemptedModels.push(`${model}/${processing}#${attempt}`);
           let response = null;
           try {
@@ -296,7 +296,7 @@ For the script: narrate the actual sequence of the video so the voice matches wh
             if (/not found|not available|unsupported|does not support|not enabled/i.test(lastError)) break;
             if (!retryable.has(lastStatus)) break;
           }
-          if (attempt < 2) await sleep(1800 * attempt);
+          if (attempt < 1) await sleep(1800 * attempt);
         }
       }
       return null;
@@ -372,7 +372,7 @@ async function startVideoAnalysisInline(request, env) {
     // Inline analysis also uses model failover. This matters on the Free tier:
     // one model can have exhausted its daily quota while another current model
     // still has capacity. Never retry a daily-quota 429 on the same model.
-    const inlineModels = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"];
+    const inlineModels = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.8-flash"];
     const attemptedModels = [];
     let lastStatus = 503;
     let lastError = "";
