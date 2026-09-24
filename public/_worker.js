@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "3.1.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "3.2.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -46,7 +46,7 @@ async function uploadAnalysisVideoStart(request, env) {
     if (!start.ok) return json({ error: "gemini_upload_start_failed", detail: await safeGoogleError(start) }, start.status || 502);
     const uploadUrl = start.headers.get("x-goog-upload-url");
     if (!uploadUrl) return json({ error: "gemini_upload_url_missing", detail: "Gemini آدرس نشست آپلود را برنگرداند." }, 502);
-    return json({ ok: true, uploadUrl, size, mimeType: mime, fileName: name, chunkSize: 4 * 1024 * 1024 });
+    return json({ ok: true, uploadUrl, size, mimeType: mime, fileName: name, chunkSize: 8 * 1024 * 1024 });
   } catch (e) {
     return json({ error: "video_upload_start_exception", detail: String(e?.message || e) }, 500);
   }
