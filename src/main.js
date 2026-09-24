@@ -532,16 +532,54 @@ $("#scriptBtn").onclick = async () => {
 
 async function getVoice() {
   if ($("#voiceState")) $("#voiceState").textContent = "در حال ساخت";
-  $("#voiceDetail").textContent = "ElevenLabs";
+  if ($("#voiceDetail")) $("#voiceDetail").textContent = "در حال اتصال به ElevenLabs…";
   state.voiceBlob = null;
   state.voiceMode = "none";
+
   try {
-    const text = String(state.script || '').trim();
-    const charCount = text.length;
+    const text = String(state.script || "").trim();
     if (!text) throw new Error("متن سناریو خالی است.");
-    log(`متن گویندگی ${charCount.toLocaleString("en-US")} کاراکتر است؛ در صورت طولانی بودن خودکار به چند بخش تقسیم می‌شود.`, "info");
-    log("شروع اتصال به سرویس گویندگی...", "info");
-    const j = await api("/api/tts", { text, language: state.language });
+
+    // TTS gets its own request path. Do not pass it through the generic API helper:
+    // this guarantees that the browser reaches /api/tts immediately after stage 2.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const endpoint = `${window.location.origin}/api/tts`;
+    const payload = JSON.stringify({ text, language: state.language });
+    log(`ارسال مستقیم درخواست گویندگی به ${endpoint}`, "info");
+
+    if (typeof window.fetch !== "function") {
+      throw new Error("fetch در مرورگر در دسترس نیست.");
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90000);
+    let response;
+    try {
+      response = await window.fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: payload,
+        cache: "no-store",
+        credentials: "same-origin",
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    log(`درخواست /api/tts به سرور رسید؛ HTTP ${response.status}.`, response.ok ? "success" : "error");
+    const raw = await response.text();
+    let j = null;
+    try { j = raw ? JSON.parse(raw) : {}; } catch (_) {
+      throw new Error(`پاسخ /api/tts قابل خواندن نیست (HTTP ${response.status}).`);
+    }
+    if (!response.ok) {
+      throw new Error(j?.detail || j?.message || j?.error || `خطای گویندگی: HTTP ${response.status}`);
+    }
+
     let blob = null;
     if (j.audio) {
       blob = base64ToBlob(j.audio, j.mime || "audio/mpeg");
@@ -549,6 +587,7 @@ async function getVoice() {
       log(`گویندگی به ${j.audioParts.length} بخش ساخته شد؛ در حال اتصال بخش‌های صدا...`, "info");
       blob = await mergeAudioParts(j.audioParts, j.mime || "audio/mpeg");
     }
+
     if (blob?.size) {
       state.voiceBlob = blob;
       state.voiceMode = "elevenlabs";
@@ -557,28 +596,18 @@ async function getVoice() {
       log(`گویندگی با موفقیت آماده شد${j.chunks > 1 ? ` (${j.chunks} بخش)` : ""}.`, "success");
       return blob;
     }
-    log(`ElevenLabs گویندگی تولید نکرد: ${j.error || "خطای نامشخص"}${j.detail ? ` — ${j.detail}` : ""}.`, "error");
+    throw new Error(j?.detail || j?.error || "سرور گویندگی فایل صوتی برنگرداند.");
   } catch (e) {
-    let detail = String(e?.message || e || "خطای نامشخص");
-    try {
-      const parsed = JSON.parse(detail);
-      const code = parsed?.error || parsed?.code || "";
-      const map = {
-        elevenlabs_invalid_api_key: "کلید ElevenLabs معتبر نیست.",
-        elevenlabs_quota_exceeded: "اعتبار/سهمیه ElevenLabs کافی نیست.",
-        elevenlabs_permission_denied: "کلید ElevenLabs اجازه Text to Speech ندارد.",
-        elevenlabs_voice_not_found: "صدای انتخاب‌شده در ElevenLabs پیدا نشد.",
-        elevenlabs_rate_limited: "درخواست‌های ElevenLabs بیش از حد شده؛ کمی بعد دوباره امتحان کن."
-      };
-      detail = map[code] || parsed?.detail || detail;
-    } catch (_) {}
+    const detail = e?.name === "AbortError"
+      ? "درخواست گویندگی بعد از ۹۰ ثانیه پاسخ نداد."
+      : String(e?.message || e || "خطای نامشخص");
     log(`گویندگی ساخته نشد: ${detail}`, "error");
   }
+
   if ($("#voiceState")) $("#voiceState").textContent = "گویندگی آماده نیست";
   if ($("#voiceDetail")) $("#voiceDetail").textContent = "خروجی بی‌صدا مجاز نیست";
   return null;
 }
-
 async function mergeAudioParts(parts, mime = "audio/mpeg") {
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) throw new Error("مرورگر صوت را پشتیبانی نمی‌کند.");
