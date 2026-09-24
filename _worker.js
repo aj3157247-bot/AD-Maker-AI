@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "3.7.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "4.2.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -156,8 +156,8 @@ async function startVideoAnalysis(request, env) {
     if (missing) return missing;
     const b = await request.json();
     const fileName = String(b.fileName || "");
-    const fileUri = String(b.fileUri || "");
-    if (!/^files\/[A-Za-z0-9._-]+$/.test(fileName) || !fileUri) {
+    const rawFileUri = String(b.fileUri || "");
+    if (!/^files\/[A-Za-z0-9._-]+$/.test(fileName) || !rawFileUri) {
       return json({ error: "gemini_file_required", detail: "فایل آماده Gemini برای شروع تحلیل مشخص نشده است." }, 400);
     }
 
@@ -192,139 +192,129 @@ Return ONLY a JSON object with this exact shape:
 
 For the script: narrate the actual sequence of the video so the voice matches what viewers see. Use a strong opening, explain the demonstrated features in order, add transitions, and finish with a call to action. Never invent prices, discounts, statistics, ratings, guarantees, users, locations, or features. If a feature is uncertain, omit it. Return only the JSON object.`;
 
-    // Gemini capacity can temporarily return 503/429 ("high demand").
-    // Keep the same uploaded file and automatically retry/fail over to other
-    // video-capable Flash models instead of making the user start the upload again.
-    const preferredModel = String(env.GEMINI_MODEL || "").trim();
-    // Never fall back to legacy Gemini 2.5 models here. Current API accounts
-    // may reject them as unavailable to new users; the stable Gemini 3.x
-    // models above are the supported video-analysis fallbacks.
-    // Agentic video is supported by Gemini 3.8 Flash, 3.7 Flash, 3.6 Flash
-    // and 3.5 Flash-Lite. IMPORTANT: gemini-3.5-flash does NOT support
-    // agentic video, so never send media_processing=AGENTIC to that model.
-    const agenticModels = [...new Set([
-      preferredModel,
-      "gemini-3.8-flash",
-      "gemini-3.7-flash",
-      "gemini-3.6-flash",
-      "gemini-3.5-flash-lite"
-    ].filter(Boolean))];
-    const staticModels = [...new Set([
-      "gemini-3.8-flash",
-      "gemini-3.7-flash",
-      "gemini-3.6-flash",
-      "gemini-3.5-flash-lite",
-      "gemini-3.5-flash"
-    ])];
+    // The previous implementation sent Agentic/Static video instructions to the
+    // legacy generateContent endpoint. Current Gemini video docs require the
+    // Interactions API for the processing field and recommend background
+    // execution for long/complex video analysis. Use only current Gemini 3.x
+    // models here; never use Gemini 2.5 fallbacks.
+    const agenticModels = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"];
+    const staticModels = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"];
+    const fileUri = rawFileUri.startsWith("https://")
+      ? rawFileUri
+      : `https://generativelanguage.googleapis.com/v1beta/${fileName}`;
 
-    const requestBody = (model, processing = "AGENTIC") => ({
-      contents: [{
-        role: "user",
-        parts: [
-          {
-            file_data: {
-              file_uri: fileUri,
-              mime_type: mime
+    const createInteraction = async (model, processing) => {
+      const body = {
+        model,
+        background: true,
+        input: [
+          { type: "video", uri: fileUri, mime_type: mime, processing },
+          { type: "text", text: prompt }
+        ],
+        response_format: {
+          type: "text",
+          mime_type: "application/json",
+          schema: {
+            type: "object",
+            properties: {
+              summary: { type: "string" },
+              facts: { type: "array", items: { type: "string" } },
+              scenes: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    start: { type: "string" },
+                    end: { type: "string" },
+                    title: { type: "string" },
+                    description: { type: "string" }
+                  },
+                  required: ["start", "end", "title", "description"]
+                }
+              },
+              script: { type: "string" }
             },
-            media_processing: processing
-          },
-          { text: prompt }
-        ]
-      }],
-      generationConfig: {
-        temperature: 0.35,
-        maxOutputTokens: 5000,
-        responseMimeType: "application/json"
-      }
-    });
+            required: ["summary", "facts", "scenes", "script"]
+          }
+        },
+        generation_config: {
+          max_output_tokens: 5000,
+          thinking_level: "low"
+        }
+      };
+      return fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+        method: "POST",
+        headers: {
+          "x-goog-api-key": env.GEMINI_API_KEY,
+          "Content-Type": "application/json",
+          "Api-Revision": "2026-05-20"
+        },
+        body: JSON.stringify(body)
+      });
+    };
 
     const retryable = new Set([408, 429, 500, 502, 503, 504]);
     const attemptedModels = [];
-    let gen = null;
-    let model = agenticModels[0] || "gemini-3.8-flash";
-    let lastGoogleError = "";
+    let lastError = "";
     let lastStatus = 503;
-    let processingMode = "agentic";
 
-    async function tryModels(models, processing) {
-      for (const candidate of models) {
+    async function tryCreate(models, processing) {
+      for (const model of models) {
         for (let attempt = 1; attempt <= 2; attempt += 1) {
-          attemptedModels.push(`${candidate}/${processing.toLowerCase()}#${attempt}`);
+          attemptedModels.push(`${model}/${processing}#${attempt}`);
+          let response = null;
           try {
-            gen = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidate)}:generateContent`, {
-              method: "POST",
-              headers: {
-                "x-goog-api-key": env.GEMINI_API_KEY,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify(requestBody(candidate, processing))
-            });
+            response = await createInteraction(model, processing);
           } catch (e) {
-            gen = null;
-            lastGoogleError = String(e?.message || e);
+            lastError = String(e?.message || e);
             lastStatus = 502;
           }
-
-          if (gen?.ok) {
-            model = candidate;
-            processingMode = processing.toLowerCase();
-            return true;
+          if (response?.ok) {
+            const interaction = await response.json();
+            if (interaction?.id) {
+              return { interaction, model, processing };
+            }
+            lastError = "Gemini عملیات را ایجاد کرد اما شناسه عملیات برنگشت.";
+            lastStatus = 502;
+          } else if (response) {
+            lastStatus = response.status || 502;
+            lastError = await safeGoogleError(response);
+            // Capability/model errors should move immediately to the next model.
+            if (/not found|not available|unsupported|does not support|not enabled/i.test(lastError)) break;
+            if (!retryable.has(lastStatus)) break;
           }
-
-          lastStatus = gen?.status || 502;
-          lastGoogleError = gen ? await safeGoogleError(gen) : lastGoogleError;
-
-          // A model-capability error should immediately move to the next model.
-          if (/agentic.*not enabled|does not support.*agentic|not supported.*agentic/i.test(lastGoogleError)) break;
-          if (!retryable.has(lastStatus)) break;
           if (attempt < 2) await sleep(1800 * attempt);
         }
       }
-      return false;
+      return null;
     }
 
-    // First use agentic video on models that actually support it.
-    let succeeded = await tryModels(agenticModels, "AGENTIC");
+    // Agentic first, then static if the account/model cannot start agentic.
+    let created = await tryCreate(agenticModels, "agentic");
+    if (!created) created = await tryCreate(staticModels, "static");
 
-    // For short videos, static processing is a valid fallback and is supported
-    // by all video-capable Gemini models. This also avoids failing just because
-    // every agentic-capable model is temporarily busy.
-    if (!succeeded) {
-      succeeded = await tryModels(staticModels, "STATIC");
-    }
-
-    if (!gen?.ok) {
-      const busy = [429, 503].includes(lastStatus) || /high demand|unavailable|rate limit|resource exhausted/i.test(lastGoogleError);
+    if (!created) {
+      const busy = [429, 503].includes(lastStatus) || /high demand|rate limit|resource exhausted|unavailable/i.test(lastError);
       return json({
         error: busy ? "gemini_capacity_busy" : "gemini_analysis_failed",
-        detail: busy
-          ? "سرویس Gemini در حال حاضر ظرفیت کافی ندارد. سیستم چند مدل و چند تلاش خودکار انجام داد؛ لطفاً چند دقیقه بعد دوباره امتحان کن."
-          : lastGoogleError,
-        model,
-        processingMode,
+        detail: busy ? "سرویس Gemini در حال حاضر ظرفیت کافی ندارد. چند مدل جدید Gemini 3.x امتحان شد؛ لطفاً چند دقیقه بعد دوباره تلاش کن." : lastError,
         attemptedModels
       }, busy ? 503 : (lastStatus || 502));
     }
 
-    const payload = await gen.json();
-    const text = extractGenerateContentText(payload);
-    if (!text) return json({ error: "gemini_analysis_empty", detail: "Gemini پاسخ متنی برای تحلیل ویدئو برنگرداند.", model }, 502);
-
-    let analysis;
-    try {
-      analysis = parseJsonObject(text);
-    } catch (e) {
-      return json({ error: "gemini_analysis_invalid_json", detail: `پاسخ Gemini JSON معتبر نبود: ${String(e?.message || e)}`, rawPreview: text.slice(0, 1200), model }, 502);
-    }
-
+    const status = String(created.interaction.status || "in_progress").toLowerCase();
+    // Background interactions normally return immediately in_progress. If a
+    // very short video completes immediately, the existing status endpoint can
+    // consume it on the next poll without another Gemini request.
     return json({
       ok: true,
-      status: "completed",
-      model,
-      processingMode,
+      status,
+      interactionId: created.interaction.id,
+      id: created.interaction.id,
+      model: created.model,
+      processingMode: created.processing,
       fileName,
-      fileUri,
-      analysis: normalizeVideoAnalysis(analysis)
+      fileUri
     });
   } catch (e) {
     return json({ error: "video_analysis_start_exception", detail: String(e?.message || e) }, 500);
