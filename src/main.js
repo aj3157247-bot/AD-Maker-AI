@@ -294,7 +294,7 @@ async function getVoice() {
       $("#voiceDetail").textContent = `Eleven v3 · ${state.language === "ps" ? "پښتو" : state.language === "en" ? "English" : "دری"} ✓`;
       return state.voiceBlob;
     }
-    log(`ElevenLabs گویندگی تولید نکرد (${j.error || "خطای نامشخص"}).`, "error");
+    log(`ElevenLabs گویندگی تولید نکرد: ${j.error || "خطای نامشخص"}${j.detail ? ` — ${j.detail}` : ""}.`, "error");
   } catch (e) {
     let detail = String(e?.message || e || "خطای نامشخص");
     try {
@@ -360,7 +360,7 @@ $("#rerenderBtn").onclick = () => $("#renderBtn").click();
 $("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.voiceBlob = null; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#scriptEditor").disabled = true; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
 $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line muted"><span>●</span> منتظر عملیات بعدی...</div>`; };
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
-$("#scriptEditor").oninput = e => { state.script = e.target.value; updateScriptMeta(state.script, "ویرایش کاربر"); };
+$("#scriptEditor").oninput = e => { state.script = e.target.value; state.voiceBlob = null; state.generated = false; $("#renderBtn").disabled = true; updateScriptMeta(state.script, "ویرایش کاربر"); log("متن سناریو تغییر کرد؛ برای جلوگیری از صدای قدیمی، گویندگی باید دوباره ساخته شود.", "info"); };
 $("#helpBtn").onclick = () => alert("۱) اطلاعات محصول را وارد کن\n۲) عکس/ویدئو اضافه کن\n۳) ساخت تبلیغ با AI را بزن\n۴) پس از آماده‌شدن سناریو و صدا، ساخت ویدئو را بزن\n۵) در پایان دانلود کن.");
 
 function targetWordsForDuration(seconds) {
