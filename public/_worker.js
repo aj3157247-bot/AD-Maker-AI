@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "3.0.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "3.1.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -61,11 +61,10 @@ async function uploadAnalysisVideoChunk(request, env) {
     const finalize = request.headers.get("X-Yar-Gemini-Finalize") === "1";
     if (!uploadUrl || !/^https:\/\/generativelanguage\.googleapis\.com\//.test(uploadUrl)) return json({ error: "upload_session_required", detail: "نشست آپلود Gemini معتبر نیست." }, 400);
     if (!Number.isFinite(offset) || offset < 0) return json({ error: "upload_offset_invalid", detail: "موقعیت آپلود معتبر نیست." }, 400);
-    const body = request.body;
-    if (!body) return json({ error: "chunk_required", detail: "قطعه‌ای از ویدئو دریافت نشد." }, 400);
-    const contentLength = request.headers.get("Content-Length");
+    const body = await request.arrayBuffer();
+    if (!body.byteLength) return json({ error: "chunk_required", detail: "قطعه‌ای از ویدئو دریافت نشد." }, 400);
     const headers = {
-      "Content-Length": contentLength || "0",
+      "Content-Length": String(body.byteLength),
       "X-Goog-Upload-Offset": String(offset),
       "X-Goog-Upload-Command": finalize ? "upload, finalize" : "upload"
     };
@@ -78,7 +77,7 @@ async function uploadAnalysisVideoChunk(request, env) {
       return json({ ok: true, finalized: true, fileName: info.name, fileUri: info.uri, mimeType: info.mimeType || "video/mp4", state: info.state || "PROCESSING" });
     }
     const nextOffset = Number(upstream.headers.get("x-goog-upload-offset"));
-    return json({ ok: true, finalized: false, nextOffset: Number.isFinite(nextOffset) ? nextOffset : offset + Number(contentLength || 0) });
+    return json({ ok: true, finalized: false, nextOffset: Number.isFinite(nextOffset) ? nextOffset : offset + body.byteLength });
   } catch (e) {
     return json({ error: "video_upload_chunk_exception", detail: String(e?.message || e) }, 500);
   }
