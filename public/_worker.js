@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "3.4.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "3.5.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -192,41 +192,87 @@ Return ONLY a JSON object with this exact shape:
 
 For the script: narrate the actual sequence of the video so the voice matches what viewers see. Use a strong opening, explain the demonstrated features in order, add transitions, and finish with a call to action. Never invent prices, discounts, statistics, ratings, guarantees, users, locations, or features. If a feature is uncertain, omit it. Return only the JSON object.`;
 
-    // Use the stable generateContent + Files API path for video understanding.
-    // The Interactions API can currently surface an internal blob://genai-api/blobref
-    // URI error for some uploaded videos. Google documents generateContent with
-    // Gemini Files API URIs for video understanding and agentic media processing.
-    const model = env.GEMINI_MODEL || "gemini-3.8-flash";
-    const gen = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": env.GEMINI_API_KEY,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        contents: [{
-          role: "user",
-          parts: [
-            {
-              file_data: {
-                file_uri: fileUri,
-                mime_type: mime
-              },
-              media_processing: "AGENTIC"
+    // Gemini capacity can temporarily return 503/429 ("high demand").
+    // Keep the same uploaded file and automatically retry/fail over to other
+    // video-capable Flash models instead of making the user start the upload again.
+    const preferredModel = String(env.GEMINI_MODEL || "").trim();
+    const modelCandidates = [...new Set([
+      preferredModel,
+      "gemini-3.8-flash",
+      "gemini-3.6-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.5-flash"
+    ].filter(Boolean))];
+
+    const requestBody = (model) => ({
+      contents: [{
+        role: "user",
+        parts: [
+          {
+            file_data: {
+              file_uri: fileUri,
+              mime_type: mime
             },
-            { text: prompt }
-          ]
-        }],
-        generationConfig: {
-          temperature: 0.35,
-          maxOutputTokens: 5000,
-          responseMimeType: "application/json"
-        }
-      })
+            media_processing: "AGENTIC"
+          },
+          { text: prompt }
+        ]
+      }],
+      generationConfig: {
+        temperature: 0.35,
+        maxOutputTokens: 5000,
+        responseMimeType: "application/json"
+      }
     });
 
-    if (!gen.ok) {
-      return json({ error: "gemini_analysis_failed", detail: await safeGoogleError(gen), model }, gen.status || 502);
+    const retryable = new Set([408, 429, 500, 502, 503, 504]);
+    const attemptedModels = [];
+    let gen = null;
+    let model = modelCandidates[0] || "gemini-3.8-flash";
+    let lastGoogleError = "";
+    let lastStatus = 503;
+
+    outer: for (const candidate of modelCandidates) {
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        attemptedModels.push(`${candidate}#${attempt}`);
+        try {
+          gen = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidate)}:generateContent`, {
+            method: "POST",
+            headers: {
+              "x-goog-api-key": env.GEMINI_API_KEY,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(requestBody(candidate))
+          });
+        } catch (e) {
+          gen = null;
+          lastGoogleError = String(e?.message || e);
+          lastStatus = 502;
+        }
+
+        if (gen?.ok) {
+          model = candidate;
+          break outer;
+        }
+
+        lastStatus = gen?.status || 502;
+        lastGoogleError = gen ? await safeGoogleError(gen) : lastGoogleError;
+
+        if (!retryable.has(lastStatus)) break;
+        if (attempt < 2) await sleep(1800 * attempt);
+      }
+    }
+
+    if (!gen?.ok) {
+      const busy = [429, 503].includes(lastStatus) || /high demand|unavailable|rate limit|resource exhausted/i.test(lastGoogleError);
+      return json({
+        error: busy ? "gemini_capacity_busy" : "gemini_analysis_failed",
+        detail: busy
+          ? "سرویس Gemini در حال حاضر ظرفیت کافی ندارد. سیستم چند مدل و چند تلاش خودکار انجام داد؛ لطفاً چند دقیقه بعد دوباره امتحان کن."
+          : lastGoogleError,
+        model: modelCandidates[0] || model,
+        attemptedModels
+      }, busy ? 503 : (lastStatus || 502));
     }
 
     const payload = await gen.json();
@@ -325,6 +371,8 @@ async function analysisInteractionStatus(request, env) {
     return json({ error: "video_analysis_status_exception", detail: String(e?.message || e) }, 500);
   }
 }
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 async function safeGoogleError(response) {
   try {
