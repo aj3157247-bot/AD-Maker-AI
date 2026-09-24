@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "4.3.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "4.4.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -200,9 +200,14 @@ For the script: narrate the actual sequence of the video so the voice matches wh
     // models here; never use Gemini 2.5 fallbacks.
     const agenticModels = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"];
     const staticModels = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"];
-    const fileUri = rawFileUri.startsWith("https://")
-      ? rawFileUri
-      : `https://generativelanguage.googleapis.com/v1beta/${fileName}`;
+    // Use the exact URI returned by Gemini Files API. Never manufacture or
+    // rewrite a URI here: blob:// URIs are browser-internal and are rejected by
+    // Interactions API. Small videos bypass this endpoint entirely via the inline
+    // path below.
+    if (/^blob:/i.test(rawFileUri)) {
+      return json({ error: "gemini_blob_uri", detail: "Gemini یک URI داخلی blob:// برگرداند؛ برای ویدئوهای کوچک باید مسیر مستقیم فعال شود." }, 422);
+    }
+    const fileUri = rawFileUri;
 
     const createInteraction = async (model, processing) => {
       const body = {
