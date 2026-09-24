@@ -295,17 +295,30 @@ $("#scriptBtn").onclick = async () => {
 };
 
 async function getVoice() {
-  $("#voiceState").textContent = "در حال ساخت"; $("#voiceDetail").textContent = "ElevenLabs v3";
+  $("#voiceState").textContent = "در حال ساخت";
+  $("#voiceDetail").textContent = "ElevenLabs v3";
   state.voiceBlob = null;
   state.voiceMode = "none";
   try {
-    const j = await api("/api/tts", { text: state.script, language: state.language });
+    const text = String(state.script || '').trim();
+    const charCount = text.length;
+    if (!text) throw new Error("متن سناریو خالی است.");
+    log(`متن گویندگی ${charCount.toLocaleString("en-US")} کاراکتر است؛ در صورت طولانی بودن خودکار به چند بخش تقسیم می‌شود.`, "info");
+    const j = await api("/api/tts", { text, language: state.language });
+    let blob = null;
     if (j.audio) {
-      state.voiceBlob = base64ToBlob(j.audio, j.mime || "audio/mpeg");
+      blob = base64ToBlob(j.audio, j.mime || "audio/mpeg");
+    } else if (Array.isArray(j.audioParts) && j.audioParts.length) {
+      log(`گویندگی به ${j.audioParts.length} بخش ساخته شد؛ در حال اتصال بخش‌های صدا...`, "info");
+      blob = await mergeAudioParts(j.audioParts, j.mime || "audio/mpeg");
+    }
+    if (blob?.size) {
+      state.voiceBlob = blob;
       state.voiceMode = "elevenlabs";
       $("#voiceState").textContent = "گویندگی AI";
-      $("#voiceDetail").textContent = `Eleven v3 · ${state.language === "ps" ? "پښتو" : state.language === "en" ? "English" : "دری"} ✓`;
-      return state.voiceBlob;
+      $("#voiceDetail").textContent = `${j.model === "eleven_v3" ? "Eleven v3" : "Eleven Multilingual v2"} · ${state.language === "ps" ? "پښتو" : state.language === "en" ? "English" : "دری"} ✓`;
+      log(`گویندگی با موفقیت آماده شد${j.chunks > 1 ? ` (${j.chunks} بخش)` : ""}.`, "success");
+      return blob;
     }
     log(`ElevenLabs گویندگی تولید نکرد: ${j.error || "خطای نامشخص"}${j.detail ? ` — ${j.detail}` : ""}.`, "error");
   } catch (e) {
@@ -327,6 +340,69 @@ async function getVoice() {
   $("#voiceState").textContent = "گویندگی آماده نیست";
   $("#voiceDetail").textContent = "خروجی بی‌صدا مجاز نیست";
   return null;
+}
+
+async function mergeAudioParts(parts, mime = "audio/mpeg") {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) throw new Error("مرورگر صوت را پشتیبانی نمی‌کند.");
+  const ctx = new AC();
+  try {
+    const decoded = [];
+    for (const part of parts) {
+      const blob = base64ToBlob(part, mime);
+      const buffer = await blob.arrayBuffer();
+      decoded.push(await ctx.decodeAudioData(buffer.slice(0)));
+    }
+    const channels = Math.max(1, ...decoded.map(x => x.numberOfChannels));
+    const sampleRate = decoded[0]?.sampleRate || 44100;
+    const totalLength = decoded.reduce((sum, x) => sum + Math.ceil(x.length * sampleRate / x.sampleRate), 0);
+    const merged = ctx.createBuffer(channels, totalLength, sampleRate);
+    let offset = 0;
+    for (const src of decoded) {
+      const ratio = sampleRate / src.sampleRate;
+      const len = Math.ceil(src.length * ratio);
+      for (let ch = 0; ch < channels; ch++) {
+        const out = merged.getChannelData(ch);
+        if (src.numberOfChannels === 1) {
+          const mono = src.getChannelData(0);
+          for (let i = 0; i < len; i++) out[offset + i] = mono[Math.min(mono.length - 1, Math.floor(i / ratio))] || 0;
+        } else {
+          const input = src.getChannelData(Math.min(ch, src.numberOfChannels - 1));
+          for (let i = 0; i < len; i++) out[offset + i] = input[Math.min(input.length - 1, Math.floor(i / ratio))] || 0;
+        }
+      }
+      offset += len;
+    }
+    return audioBufferToWav(merged);
+  } finally {
+    try { await ctx.close(); } catch (_) {}
+  }
+}
+
+function audioBufferToWav(buffer) {
+  const channels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const frames = buffer.length;
+  const bytesPerSample = 2;
+  const dataSize = frames * channels * bytesPerSample;
+  const out = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(out);
+  const write = (o, s) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+  write(0, "RIFF"); view.setUint32(4, 36 + dataSize, true); write(8, "WAVE");
+  write(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true); view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * bytesPerSample, true);
+  view.setUint16(32, channels * bytesPerSample, true); view.setUint16(34, 16, true);
+  write(36, "data"); view.setUint32(40, dataSize, true);
+  let offset = 44;
+  for (let i = 0; i < frames; i++) {
+    for (let ch = 0; ch < channels; ch++) {
+      const sample = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i] || 0));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([out], { type: "audio/wav" });
 }
 
 $("#renderBtn").onclick = async () => {
