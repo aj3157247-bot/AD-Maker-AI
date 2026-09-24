@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "4.4.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "4.5.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -12,6 +12,7 @@ export default {
     if (url.pathname === "/api/analyze-video/start" && request.method === "POST") return startVideoAnalysis(request, env);
     if (url.pathname === "/api/analyze-video/start-inline" && request.method === "POST") return startVideoAnalysisInline(request, env);
     if (url.pathname === "/api/analyze-video/interaction-status" && request.method === "GET") return analysisInteractionStatus(request, env);
+    if (url.pathname === "/api/analyze-video/openrouter-fallback" && request.method === "POST") return openRouterVideoFallback(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
     return env.ASSETS.fetch(request);
   }
@@ -467,6 +468,93 @@ function extractInteractionText(result) {
     for (const c of Array.isArray(step?.content) ? step.content : []) if (c?.type === "text" && c.text) parts.push(c.text);
   }
   return parts.join("\n").trim();
+}
+
+
+async function openRouterVideoFallback(request, env) {
+  try {
+    if (!env.OPENROUTER_API_KEY) return json({ error: "openrouter_missing_api_key", detail: "OpenRouter API Key در Cloudflare تنظیم نشده است." }, 503);
+    const b = await request.json();
+    const frames = Array.isArray(b.frames) ? b.frames.filter(x => x && typeof x.data === "string").slice(0, 18) : [];
+    if (!frames.length) return json({ error: "video_frames_required", detail: "فریم‌های ویدئو برای موتور جایگزین دریافت نشد." }, 400);
+    const brand = String(b.brand || "").trim();
+    const description = String(b.description || "").trim();
+    const language = String(b.language || "fa").toLowerCase();
+    const duration = Math.max(15, Math.min(300, Number(b.duration) || 60));
+    const platform = String(b.platform || "YouTube Shorts");
+    const langName = { en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian", ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" }[language] || "Persian";
+    const targetWords = Math.max(35, Math.min(900, Math.round(duration * 2.2)));
+    const prompt = `You are the fallback video-analysis engine for AD Maker AI. Gemini failed because of temporary capacity/quota. Analyze the supplied sequential video frames from an uploaded product/site demonstration. Each frame includes an approximate timestamp. Reconstruct the visible sequence carefully. Use ONLY information visible in the frames or supplied by the user. Never invent prices, discounts, statistics, ratings, guarantees, locations, users, or features. If a detail is unclear, omit it.
+
+Brand: ${brand || "Unknown"}
+User description: ${description || "None provided"}
+Platform: ${platform}
+Output language: ${langName}
+Target advertisement duration: ${duration} seconds
+Target voice-over length: about ${targetWords} words.
+
+Return ONLY valid JSON with exactly this shape:
+{"summary":"short factual summary","facts":["verified facts"],"scenes":[{"start":"00:00","end":"00:08","title":"short title","description":"what is visibly happening"}],"script":"complete professional voice-over in the requested language"}
+
+The script must follow the observed sequence, explain what viewers actually see, use natural transitions, and finish with a call to action. It should be long enough for the requested duration. Do not mention that you are a fallback model or that Gemini failed.`;
+    const content = [{ type: "text", text: prompt }];
+    for (const frame of frames) {
+      content.push({ type: "text", text: `Frame timestamp: ${String(frame.time || "00:00")}` });
+      content.push({ type: "image_url", image_url: { url: frame.data } });
+    }
+    const models = [
+      "google/gemma-4-26b-a4b-it:free",
+      "google/gemma-4-31b-it:free",
+      "openrouter/free"
+    ];
+    let last = { status: 503, detail: "OpenRouter هیچ مدل رایگانی پاسخ قابل استفاده نداد." };
+    for (const model of models) {
+      try {
+        const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": new URL(request.url).origin,
+            "X-Title": "AD Maker AI"
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: "user", content }],
+            temperature: 0.2,
+            max_tokens: Math.min(6000, Math.max(1200, targetWords * 3))
+          })
+        });
+        const payload = await r.json().catch(() => ({}));
+        if (r.ok) {
+          let text = payload?.choices?.[0]?.message?.content;
+          if (Array.isArray(text)) text = text.map(x => x?.text || "").join("\n");
+          text = String(text || "").trim();
+          if (text) {
+            let parsed;
+            try { parsed = parseJsonObject(text); } catch (_) {
+              last = { status: 502, detail: `مدل ${model} پاسخ JSON معتبر نداد.` };
+              continue;
+            }
+            const scenes = Array.isArray(parsed.scenes) ? parsed.scenes.slice(0, 40) : [];
+            const facts = Array.isArray(parsed.facts) ? parsed.facts.slice(0, 60) : [];
+            const script = String(parsed.script || "").trim();
+            if (!script) { last = { status: 502, detail: `مدل ${model} سناریوی صوتی قابل استفاده برنگرداند.` }; continue; }
+            return json({ ok: true, status: "completed", provider: "openrouter-video-fallback", model: payload?.model || model, summary: String(parsed.summary || ""), facts, scenes, script, framesAnalyzed: frames.length });
+          }
+        }
+        const err = payload?.error || {};
+        last = { status: r.status || 502, detail: String(err.message || `OpenRouter برای ${model} پاسخ مناسب نداد.`) };
+        if ([401, 403, 402].includes(r.status)) break;
+        if (r.status === 429 || r.status === 503) await sleep(900);
+      } catch (e) {
+        last = { status: 503, detail: String(e?.message || e) };
+      }
+    }
+    return json({ error: "openrouter_video_fallback_failed", detail: last.detail, retryable: [429, 502, 503, 504].includes(last.status) }, last.status || 503);
+  } catch (e) {
+    return json({ error: "openrouter_video_fallback_exception", detail: String(e?.message || e) }, 500);
+  }
 }
 
 async function analysisInteractionStatus(request, env) {
