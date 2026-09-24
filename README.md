@@ -31,13 +31,13 @@ Build output:
 Production branch:
 `main`
 
-## مهم: Advanced Mode
+## مهم: Cloudflare Pages Advanced Mode
 
-فایل `public/_worker.js` باید در خروجی `dist` کپی شود. Vite این کار را خودکار انجام می‌دهد چون فایل داخل `public` است.
-
-در نتیجه Worker در مسیر:
+فایل Worker عمداً در مسیر `public/_worker.js` قرار داده شده است. Vite در زمان build آن را خودکار به:
 `dist/_worker.js`
-قرار خواهد گرفت.
+کپی می‌کند.
+
+**این مورد مهم است:** فایل `_worker.js` را در ریشه پروژه قرار ندهید؛ برای این پروژه باید نسخه موجود در `public/_worker.js` وارد خروجی `dist` شود تا مسیرهای `/api/*` توسط Worker اجرا شوند.
 
 ## Secrets
 
@@ -66,10 +66,10 @@ Workers & Pages → پروژه → Settings → Bindings → Add → Workers AI
 
 ## تست
 
-بعد از Deploy:
+بعد از Deploy، این آدرس را باز کنید:
 `https://YOUR-PROJECT.pages.dev/api/health`
 
-باید JSON مشابه زیر بدهد:
+باید مستقیماً JSON زیر را بدهد (نه صفحه اصلی سایت):
 `{"ok":true,"service":"AD Maker AI","version":"2.0.0"}`
 
 ## نکته
