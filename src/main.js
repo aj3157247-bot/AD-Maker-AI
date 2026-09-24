@@ -8,6 +8,7 @@ const state = {
   duration: 15,
   script: "",
   scriptMode: "ai",
+  buildMode: "pro",
   customScript: "",
   activeView: "preview",
   busy: false,
@@ -110,11 +111,28 @@ function renderShell() {
             <div class="field"><label>مدت</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select></div>
           </div>
 
-          <div class="field scenario-mode-field"><label>روش ساخت سناریو</label><div class="scenario-mode-grid">
-            <button type="button" class="scenario-mode active" data-script-mode="ai"><i>✦</i><span>سناریوی هوشمند</span><small>ساخت کامل با AI</small></button>
-            <button type="button" class="scenario-mode" data-script-mode="manual"><i>✎</i><span>سناریوی اختصاصی من</span><small>متن را خودت می‌نویسی</small></button>
-            <button type="button" class="scenario-mode" data-script-mode="hybrid"><i>✦+</i><span>همکاری من + AI</span><small>متن تو، پرداخت حرفه‌ای با AI</small></button>
-          </div><div id="customScriptWrap" class="custom-script-wrap" hidden><textarea id="customScript" placeholder="سناریوی خودت را اینجا بنویس..."></textarea><small>در حالت «همکاری من + AI»، متن تو حفظ می‌شود و AI آن را حرفه‌ای، منسجم و متناسب با زمان ویدئو بازنویسی می‌کند.</small></div></div>
+          <div class="field creation-mode-field">
+            <div class="creation-mode-head"><label>حالت ساخت تبلیغ</label><span id="selectedBuildMode">حرفه‌ای · تحلیل + AI</span></div>
+            <div class="creation-mode-grid">
+              <button type="button" class="creation-mode active" data-build-mode="pro">
+                <i>🎬</i><span>ساخت حرفه‌ای</span><small>تحلیل رسانه، سناریوی AI، گویندگی و رندر</small><em>توصیه‌شده</em>
+              </button>
+              <button type="button" class="creation-mode" data-build-mode="fast">
+                <i>⚡</i><span>ساخت سریع</span><small>بدون تحلیل عمیق ویدئو؛ سریع‌تر به سناریو و صدا می‌رسد</small><em>سریع</em>
+              </button>
+              <button type="button" class="creation-mode" data-build-mode="video">
+                <i>🔍</i><span>تحلیل هوشمند ویدئو</span><small>صحنه‌ها، متن‌ها و کارهای دیده‌شده را بررسی می‌کند و سناریو می‌سازد</small><em>ویدئو</em>
+              </button>
+              <button type="button" class="creation-mode" data-build-mode="manual">
+                <i>✎</i><span>سناریوی اختصاصی من</span><small>متن کامل سناریو را خودت تعیین می‌کنی؛ AI فقط اجرا و رندر می‌کند</small><em>کنترل کامل</em>
+              </button>
+              <button type="button" class="creation-mode" data-build-mode="hybrid">
+                <i>✦+</i><span>همکاری من + AI</span><small>متن تو حفظ می‌شود و AI آن را حرفه‌ای و متناسب با زمان بازنویسی می‌کند</small><em>هوشمند</em>
+              </button>
+            </div>
+            <div id="buildModeInfo" class="build-mode-info"><strong>🎬 ساخت حرفه‌ای</strong><span>برای تبلیغاتی که می‌خواهی رسانه‌ها و ویدئوی معرفی با دقت تحلیل شوند.</span></div>
+            <div id="customScriptWrap" class="custom-script-wrap" hidden><textarea id="customScript" placeholder="سناریوی خودت را اینجا بنویس..."></textarea><small>متن تو حفظ می‌شود؛ در حالت همکاری، AI آن را منسجم‌تر و متناسب با زمان و پلتفرم می‌کند.</small></div>
+          </div>
 
           <div class="field"><div class="platform-title"><label>پلتفرم تبلیغ</label><span id="selectedPlatform">YouTube Shorts · 9:16</span></div><div class="style-grid platform-grid">
             <button type="button" class="style-chip active" data-style="youtube_short"><i>▶</i><span>YouTube Shorts</span></button>
@@ -622,6 +640,29 @@ function updatePlatformUI() {
   $("#stageFormat").textContent = `خروجی ${ratio} با صدا و زیرنویس`;
 }
 
+function buildModeLabel(mode) {
+  return ({ pro: "ساخت حرفه‌ای", fast: "ساخت سریع", video: "تحلیل هوشمند ویدئو", manual: "سناریوی اختصاصی من", hybrid: "همکاری من + AI" })[mode] || "ساخت حرفه‌ای";
+}
+
+function updateBuildModeUI() {
+  const meta = {
+    pro: { title: "🎬 ساخت حرفه‌ای", summary: "برای تبلیغاتی که می‌خواهی رسانه‌ها و ویدئوی معرفی با دقت تحلیل شوند.", selected: "حرفه‌ای · تحلیل + AI", button: "✦ ساخت تبلیغ حرفه‌ای" },
+    fast: { title: "⚡ ساخت سریع", summary: "تحلیل عمیق ویدئو حذف می‌شود تا سریع‌تر به سناریو، گویندگی و خروجی برسی.", selected: "سریع · کمترین انتظار", button: "⚡ ساخت سریع تبلیغ" },
+    video: { title: "🔍 تحلیل هوشمند ویدئو", summary: "ویدئوی معرفی با Gemini بررسی می‌شود و سناریو بر اساس صحنه‌ها و قابلیت‌های واقعی ساخته می‌شود.", selected: "ویدئو · تحلیل Gemini", button: "🔍 تحلیل و ساخت تبلیغ" },
+    manual: { title: "✎ سناریوی اختصاصی من", summary: "سناریو کاملاً از متن تو می‌آید؛ هیچ بازنویسی AI روی متن اصلی انجام نمی‌شود.", selected: "اختصاصی · کنترل کامل", button: "✎ ساخت از سناریوی من" },
+    hybrid: { title: "✦+ همکاری من + AI", summary: "پیش‌نویس تو حفظ می‌شود و AI آن را حرفه‌ای، منسجم و متناسب با زمان و پلتفرم می‌کند.", selected: "همکاری · تو + AI", button: "✦+ پرداخت سناریو با AI" }
+  }[state.buildMode] || null;
+  if (!meta) return;
+  const selected = $("#selectedBuildMode");
+  const info = $("#buildModeInfo");
+  const btn = $("#scriptBtn");
+  const custom = $("#customScriptWrap");
+  if (selected) selected.textContent = meta.selected;
+  if (info) info.innerHTML = `<strong>${escapeHtml(meta.title)}</strong><span>${escapeHtml(meta.summary)}</span>`;
+  if (btn) btn.textContent = meta.button;
+  if (custom) custom.hidden = !["manual", "hybrid"].includes(state.buildMode);
+}
+
 function bindChoiceControls() {
   // Bind directly to each button. This is intentionally not delegated from document:
   // on some Android WebViews/browsers a delegated click can be swallowed when cards
@@ -640,22 +681,24 @@ function bindChoiceControls() {
     };
   });
 
-  $$(".scenario-mode[data-script-mode]").forEach(button => {
+  $$(".creation-mode[data-build-mode]").forEach(button => {
     button.type = "button";
-    button.setAttribute("aria-pressed", button.dataset.scriptMode === state.scriptMode ? "true" : "false");
+    const active = button.dataset.buildMode === state.buildMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
     button.onclick = (event) => {
       event.preventDefault();
       event.stopPropagation();
-      state.scriptMode = button.dataset.scriptMode;
-      $$(".scenario-mode[data-script-mode]").forEach(x => {
-        const active = x === button;
-        x.classList.toggle("active", active);
-        x.setAttribute("aria-pressed", active ? "true" : "false");
+      state.buildMode = button.dataset.buildMode;
+      const mode = state.buildMode;
+      state.scriptMode = mode === "manual" ? "manual" : mode === "hybrid" ? "hybrid" : "ai";
+      $$(".creation-mode[data-build-mode]").forEach(x => {
+        const isActive = x.dataset.buildMode === mode;
+        x.classList.toggle("active", isActive);
+        x.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
-      const custom = $("#customScriptWrap");
-      if (custom) custom.hidden = state.scriptMode === "ai";
-      const scriptBtn = $("#scriptBtn");
-      if (scriptBtn) scriptBtn.textContent = state.scriptMode === "manual" ? "✎ آماده‌سازی سناریوی من" : state.scriptMode === "hybrid" ? "✦+ پرداخت سناریو با AI" : "✦ ساخت سناریوی هوشمند";
+      updateBuildModeUI();
+      log(`حالت ساخت روی «${buildModeLabel(mode)}» تنظیم شد.`, "success");
     };
   });
 
@@ -684,6 +727,7 @@ function bindChoiceControls() {
 }
 
 bindChoiceControls();
+updateBuildModeUI();
 updatePlatformUI();
 updateVideoAnalysisUI();
 
@@ -700,7 +744,7 @@ $("#scriptBtn").onclick = async () => {
   const brand = $("#brand").value.trim(), desc = $("#desc").value.trim();
   const customScript = $("#customScript").value.trim();
   state.customScript = customScript;
-  if (!brand || (state.scriptMode !== "manual" && !desc) || (state.scriptMode !== "ai" && !customScript)) {
+  if (!brand || (state.scriptMode !== "manual" && !desc) || ((state.scriptMode === "manual" || state.scriptMode === "hybrid") && !customScript)) {
     const msg = state.scriptMode === "manual" ? "نام برند و متن سناریوی اختصاصی را وارد کن." : state.scriptMode === "hybrid" ? "نام برند، توضیح محصول و متن سناریوی خودت را وارد کن." : t("missing");
     setProgress(0, "اطلاعات ناقص", msg); log(msg, "error"); return;
   }
@@ -714,9 +758,16 @@ $("#scriptBtn").onclick = async () => {
     if (state.assets.length) log(t("mediaReady"), "success"); else log(t("noMedia"));
 
     let videoAnalysis = state.videoAnalysis;
-    if (state.assets.some(isVideoFile) && state.scriptMode !== "manual" && !videoAnalysis) {
+    const shouldAnalyzeVideo = state.buildMode === "pro" || state.buildMode === "video";
+    if (shouldAnalyzeVideo && state.assets.some(isVideoFile) && state.scriptMode !== "manual" && !videoAnalysis) {
       try { videoAnalysis = await analyzeUploadedVideo(); }
       catch (_) { log("تحلیل ویدئو در دسترس نبود؛ سناریو با اطلاعات متنی ادامه پیدا می‌کند.", "info"); }
+    }
+    if (state.buildMode === "video" && !state.assets.some(isVideoFile)) {
+      log("حالت تحلیل ویدئو انتخاب شده اما ویدئویی اضافه نشده است؛ سناریو با اطلاعات متنی ادامه پیدا می‌کند.", "info");
+    }
+    if (state.buildMode === "fast") {
+      log("حالت ساخت سریع فعال است؛ تحلیل عمیق ویدئو برای کاهش زمان انتظار رد شد.", "info");
     }
     // Stage 01 is now genuinely complete before stage 02 becomes active.
     setStage(0, "done");
@@ -957,7 +1008,7 @@ $("#downloadBtn").onclick = () => {
 };
 
 $("#rerenderBtn").onclick = () => $("#renderBtn").click();
-$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".scenario-mode").forEach(x => x.classList.toggle("active", x.dataset.scriptMode === "ai")); $("#scriptBtn").textContent = "✦ ساخت سناریوی هوشمند"; $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
+$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.buildMode = "pro"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".creation-mode").forEach(x => x.classList.toggle("active", x.dataset.buildMode === "pro")); updateBuildModeUI(); $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
 $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line muted"><span>●</span> منتظر عملیات بعدی...</div>`; };
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
 $("#scriptMore").onclick = () => { const box = $("#scriptEditor"); const details = $(".script-details"); details.open = true; box.classList.toggle("expanded"); $("#scriptMore").textContent = box.classList.contains("expanded") ? "کمتر" : "بیشتر"; if (box.classList.contains("expanded")) { box.style.height = "auto"; box.style.height = `${Math.max(180, box.scrollHeight)}px`; } else box.style.height = "82px"; };
