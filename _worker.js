@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "4.2.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "4.3.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -10,6 +10,7 @@ export default {
     if (url.pathname === "/api/analyze-video/upload-chunk" && request.method === "POST") return uploadAnalysisVideoChunk(request, env);
     if (url.pathname === "/api/analyze-video/file-status" && request.method === "GET") return analysisFileStatus(request, env);
     if (url.pathname === "/api/analyze-video/start" && request.method === "POST") return startVideoAnalysis(request, env);
+    if (url.pathname === "/api/analyze-video/start-inline" && request.method === "POST") return startVideoAnalysisInline(request, env);
     if (url.pathname === "/api/analyze-video/interaction-status" && request.method === "GET") return analysisInteractionStatus(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
     return env.ASSETS.fetch(request);
@@ -318,6 +319,63 @@ For the script: narrate the actual sequence of the video so the voice matches wh
     });
   } catch (e) {
     return json({ error: "video_analysis_start_exception", detail: String(e?.message || e) }, 500);
+  }
+}
+
+
+function bytesToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + step, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+async function startVideoAnalysisInline(request, env) {
+  try {
+    const missing = await requireGemini(env);
+    if (missing) return missing;
+    const form = await request.formData();
+    const file = form.get("video");
+    if (!(file instanceof File)) return json({ error: "video_required", detail: "فایل ویدئو دریافت نشد." }, 400);
+    const size = Number(file.size || 0);
+    if (!size) return json({ error: "empty_video", detail: "فایل ویدئو خالی است." }, 400);
+    // Inline video is deliberately limited so base64 expansion stays well below
+    // Cloudflare/Gemini request limits. It is the fallback for the blob-URI issue.
+    if (size > 20 * 1024 * 1024) return json({ error: "inline_video_too_large", detail: "برای مسیر مستقیم، ویدئو باید حداکثر 20MB باشد." }, 413);
+
+    const mime = String(file.type || "video/mp4");
+    const brand = String(form.get("brand") || "").trim();
+    const description = String(form.get("description") || "").trim();
+    const language = String(form.get("language") || "fa").toLowerCase();
+    const duration = Math.max(15, Math.min(300, Number(form.get("duration")) || 60));
+    const platform = String(form.get("platform") || "YouTube Shorts");
+    const langName = { en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian", ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" }[language] || "Persian";
+    const targetWords = Math.max(35, Math.min(900, Math.round(duration * 2.2)));
+    const prompt = `Analyze this product/site demonstration video for AD Maker AI. Inspect the actual frames and visible UI text. Do not invent anything not shown or stated. Brand: ${brand || "Unknown"}. User description: ${description || "None provided"}. Platform: ${platform}. Output language: ${langName}. Target advertisement duration: ${duration} seconds. Target voice-over length: about ${targetWords} words. Return ONLY JSON with summary, facts, scenes[{start,end,title,description}], and script. The script must narrate the actual sequence in order and end with a call to action. Never invent prices, discounts, statistics, ratings, guarantees, locations, users, or features.`;
+    const data = bytesToBase64(await file.arrayBuffer());
+    const body = {
+      model: "gemini-3.8-flash",
+      background: true,
+      input: [
+        { type: "video", data, mime_type: mime, processing: "static" },
+        { type: "text", text: prompt }
+      ],
+      generation_config: { max_output_tokens: 5000, thinking_level: "low" }
+    };
+    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json", "Api-Revision": "2026-05-20" },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) return json({ error: "gemini_inline_analysis_failed", detail: await safeGoogleError(response) }, response.status || 502);
+    const interaction = await response.json();
+    if (!interaction?.id) return json({ error: "gemini_interaction_id_missing", detail: "Gemini عملیات مستقیم را ایجاد کرد اما شناسه برنگشت." }, 502);
+    return json({ ok: true, status: String(interaction.status || "in_progress").toLowerCase(), interactionId: interaction.id, id: interaction.id, model: interaction.model || "gemini-3.8-flash", processingMode: "static-inline" });
+  } catch (e) {
+    return json({ error: "video_analysis_inline_exception", detail: String(e?.message || e) }, 500);
   }
 }
 
