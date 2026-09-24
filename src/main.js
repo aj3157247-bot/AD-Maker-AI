@@ -90,7 +90,7 @@ function renderShell() {
 
           <div class="grid-2">
             <div class="field"><label>زبان</label><select id="lang"><option value="fa">دری افغانستان</option><option value="ps">پښتو</option><option value="en">English</option></select></div>
-            <div class="field"><label>مدت</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option></select></div>
+            <div class="field"><label>مدت</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select></div>
           </div>
 
           <div class="field"><label>سبک تبلیغ</label><div class="style-grid">
@@ -252,11 +252,14 @@ $("#scriptBtn").onclick = async () => {
 
     setStage(1); setProgress(25, "نوشتن سناریو", t("script")); log("درخواست سناریو به API ارسال شد.");
     let j;
-    try { j = await api("/api/generate-script", { brand, description: desc, language: state.language, duration: state.duration, style: state.style }); }
+    try { j = await api("/api/generate-script", { brand, description: desc, language: state.language, duration: state.duration, style: state.style, targetWords: targetWordsForDuration(state.duration) }); }
     catch (e) { log("اتصال به API سناریو ناموفق بود؛ حالت داخلی فعال شد.", "error"); j = { script: fallbackScript(brand, desc), fallback: true, provider: "local" }; }
     state.script = j.script || fallbackScript(brand, desc);
     $("#scriptEditor").value = state.script; $("#scriptEditor").disabled = false; $("#editScript").disabled = false;
     updateScriptMeta(state.script, j.provider || (j.fallback ? "داخلی" : "AI"));
+    const expectedWords = targetWordsForDuration(state.duration);
+    const actualWords = state.script.trim().split(/\s+/).filter(Boolean).length;
+    log(`${actualWords} کلمه برای ویدئوی ${Math.round(state.duration / 60) >= 1 ? `${Math.round(state.duration / 60)} دقیقه` : `${state.duration} ثانیه`} آماده شد؛ هدف تقریبی ${expectedWords} کلمه است.`, actualWords >= Math.round(expectedWords * 0.72) ? "success" : "info");
     log(j.fallback ? t("fallback") : "سناریوی AI با موفقیت دریافت شد.", j.fallback ? "info" : "success");
     setStage(1, "done");
 
@@ -359,6 +362,14 @@ $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line mut
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
 $("#scriptEditor").oninput = e => { state.script = e.target.value; updateScriptMeta(state.script, "ویرایش کاربر"); };
 $("#helpBtn").onclick = () => alert("۱) اطلاعات محصول را وارد کن\n۲) عکس/ویدئو اضافه کن\n۳) ساخت تبلیغ با AI را بزن\n۴) پس از آماده‌شدن سناریو و صدا، ساخت ویدئو را بزن\n۵) در پایان دانلود کن.");
+
+function targetWordsForDuration(seconds) {
+  const sec = Math.max(15, Number(seconds) || 15);
+  // Natural ad narration averages roughly 2.1–2.4 words/second depending on language.
+  // Use a moderate target so the generated script fills the selected duration without
+  // becoming unnaturally dense.
+  return Math.round(sec * 2.2);
+}
 
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -467,14 +478,32 @@ async function renderVideo(voiceBlob) {
     const lines = state.script.split(/\n+/).map(x => x.trim()).filter(Boolean);
     const total = Math.max(3, Number(state.duration) || 15) * 1000;
     const brand = $("#brand").value.trim();
+
+    // Every selected media item gets its own scene. The old renderer selected the
+    // scene from the number of script lines, so a short two-line script could make
+    // eight uploaded photos collapse into only two visible photos. We now divide
+    // the full duration evenly across all prepared assets, independently of script length.
+    const sceneCount = media.length || 1;
+    const sceneDuration = total / sceneCount;
+    log(`${sceneCount} صحنه برای ${Math.round(total / 1000)} ثانیه تنظیم شد؛ هر رسانه حدود ${Math.max(1, Math.round(sceneDuration / 1000))} ثانیه نمایش داده می‌شود.`, "success");
     const start = performance.now();
     let started = false;
+
+    const sceneAt = elapsed => {
+      if (!media.length) return { item: null, index: 0, progress: 0 };
+      const safeElapsed = Math.min(Math.max(0, elapsed), Math.max(0, total - 1));
+      const raw = safeElapsed / sceneDuration;
+      const index = Math.min(sceneCount - 1, Math.floor(raw));
+      return { item: media[index], index, progress: Math.min(1, Math.max(0, raw - index)) };
+    };
 
     // Draw one complete frame immediately so the recording never starts with a blank canvas.
     const drawFrame = (elapsed) => {
       const p = Math.min(1, elapsed / total);
-      const lineIndex = Math.min(Math.max(lines.length - 1, 0), Math.floor(p * Math.max(lines.length, 1)));
-      const item = media.length ? media[lineIndex % media.length] : null;
+      const scene = sceneAt(elapsed);
+      const item = scene.item;
+      const sceneP = scene.progress;
+      const lineIndex = lines.length ? Math.min(lines.length - 1, Math.floor(p * lines.length)) : 0;
 
       ctx.clearRect(0, 0, W, H);
       ctx.fillStyle = "#050507";
@@ -484,7 +513,6 @@ async function renderVideo(voiceBlob) {
         const el = item.el;
         if (item.type === "video") {
           const duration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : item.duration;
-          const sceneP = (p * media.length) % 1;
           const target = Math.min(Math.max(0, sceneP * duration), Math.max(0, duration - 0.05));
           if (Math.abs((el.currentTime || 0) - target) > 0.20) {
             try { el.currentTime = target; } catch (_) {}
@@ -494,7 +522,6 @@ async function renderVideo(voiceBlob) {
         const ew = el.videoWidth || el.naturalWidth || W;
         const eh = el.videoHeight || el.naturalHeight || H;
         const cover = Math.max(W / ew, H / eh);
-        const sceneP = (p * media.length) % 1;
         const zoom = 1 + 0.08 * sceneP;
         const iw = ew * cover * zoom;
         const ih = eh * cover * zoom;
