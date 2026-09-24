@@ -59,83 +59,88 @@ function setDir() {
 
 function renderShell() {
   const stages = [
-    ["01", "تحلیل", "اطلاعات و رسانه‌ها"],
-    ["02", "سناریو", "متن تبلیغاتی"],
-    ["03", "گویندگی", "صدای حرفه‌ای"],
-    ["04", "صحنه‌ها", "چیدمان رسانه‌ها"],
+    ["01", "اطلاعات", "شروع پروژه"],
+    ["02", "سناریو", "متن هوشمند"],
+    ["03", "گویندگی", "صدای AI"],
+    ["04", "صحنه‌ها", "رسانه‌ها"],
     ["05", "رندر", "ساخت ویدئو"],
-    ["06", "آماده", "خروجی نهایی"]
+    ["06", "آماده", "خروجی"]
   ];
   $("#app").innerHTML = `
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand"><div class="brandmark">✦</div><div><strong>AD Maker AI</strong><span>استودیوی ساخت تبلیغ</span></div></div>
-      <div class="top-actions"><span class="secure-pill">🔒 APIها امن در Cloudflare</span><button id="helpBtn" class="icon-btn" aria-label="راهنما">?</button></div>
+      <div class="brand">
+        <div class="brandmark">✦</div>
+        <div><strong>AD Maker AI</strong><span>استودیوی حرفه‌ای ساخت تبلیغ</span></div>
+      </div>
+      <div class="top-actions">
+        <span class="status-pill"><i></i> آماده ساخت</span>
+        <button id="helpBtn" class="icon-btn" aria-label="راهنما">?</button>
+      </div>
     </header>
 
     <main>
-      <section class="hero">
-        <div class="eyebrow">AI ADVERTISING STUDIO · PROFESSIONAL WORKFLOW</div>
-        <h1>ایده‌ات را به یک <span>تبلیغ حرفه‌ای</span> تبدیل کن.</h1>
-        <p>اطلاعات محصول و رسانه‌ها را بده؛ سناریو، گویندگی، صحنه‌بندی و ویدئوی عمودی آماده شبکه‌های اجتماعی را در یک جریان ساده بساز.</p>
-        <div class="hero-badges"><span>🎙️ گویندگی AI</span><span>🎬 رندر عمودی</span><span>📝 زیرنویس</span><span>📱 مناسب Reels / Shorts</span></div>
+      <section class="intro-row">
+        <div>
+          <div class="eyebrow">AI AD STUDIO</div>
+          <h1>تبلیغ حرفه‌ای، <span>ساده و سریع.</span></h1>
+          <p>اطلاعات محصول و رسانه‌ها را بده؛ سناریو، گویندگی و ویدئوی عمودی را یک‌جا بساز.</p>
+        </div>
+        <div class="intro-mini"><b>9:16</b><span>Reels · Shorts · Stories</span></div>
       </section>
 
       <section class="workspace">
         <aside class="setup card">
-          <div class="section-head"><div><small>مرحله ۱</small><h2>اطلاعات تبلیغ</h2></div><span class="step-state">شروع</span></div>
+          <div class="section-head"><div><small>شروع</small><h2>ساخت تبلیغ</h2></div><span class="step-state">۱ از ۳</span></div>
 
-          <div class="field"><label>نام برند / محصول <b>*</b></label><input id="brand" class="input" placeholder="${t("brandPlaceholder")}"></div>
-          <div class="field"><label>توضیح محصول یا خدمات <b>*</b></label><textarea id="desc" placeholder="${t("descPlaceholder")}"></textarea><div class="hint">هرچه اطلاعات واقعی‌تر بدهی، سناریوی AI دقیق‌تر می‌شود.</div></div>
+          <div class="field"><label>نام برند یا محصول <b>*</b></label><input id="brand" class="input" placeholder="${t("brandPlaceholder")}"></div>
+          <div class="field"><label>توضیحات <b>*</b></label><textarea id="desc" placeholder="${t("descPlaceholder")}"></textarea><div class="hint">اگر توضیحات کوتاه باشد، AI متن تبلیغ را متناسب با زمان انتخاب‌شده کامل می‌کند.</div></div>
 
           <div class="grid-2">
             <div class="field"><label>زبان</label><select id="lang"><option value="fa">دری افغانستان</option><option value="ps">پښتو</option><option value="en">English</option></select></div>
-            <div class="field"><label>مدت</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select></div>
+            <div class="field"><label>مدت ویدئو</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select></div>
           </div>
 
-          <div class="field"><label>سبک تبلیغ</label><div class="style-grid">
-            <button class="style-chip active" data-style="cinematic"><i>🎬</i><span>سینمایی</span><small>دراماتیک</small></button>
-            <button class="style-chip" data-style="modern"><i>⚡</i><span>مدرن</span><small>تمیز و سریع</small></button>
-            <button class="style-chip" data-style="luxury"><i>💎</i><span>لوکس</span><small>پریمیوم</small></button>
-            <button class="style-chip" data-style="sales"><i>🛍️</i><span>فروش</span><small>CTA قوی</small></button>
-            <button class="style-chip" data-style="social"><i>📱</i><span>ریلز</span><small>شبکه اجتماعی</small></button>
+          <div class="field"><label>سبک</label><div class="style-grid">
+            <button class="style-chip active" data-style="cinematic"><i>🎬</i><span>سینمایی</span><small>پویا</small></button>
+            <button class="style-chip" data-style="modern"><i>⚡</i><span>مدرن</span><small>تمیز</small></button>
+            <button class="style-chip" data-style="luxury"><i>◆</i><span>لوکس</span><small>پریمیوم</small></button>
+            <button class="style-chip" data-style="sales"><i>↗</i><span>فروش</span><small>CTA</small></button>
+            <button class="style-chip" data-style="social"><i>◉</i><span>ریلز</span><small>سریع</small></button>
           </div></div>
 
-          <div class="field"><label>رنگ برند</label><div class="color-row"><input id="brandColor" type="color" value="#7c5cff"><span id="colorHex">#7C5CFF</span><span class="color-note">در عنوان‌ها و نورپردازی استفاده می‌شود.</span></div></div>
+          <div class="field"><label>رسانه‌ها</label><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>هر تعداد رسانه که می‌خواهی</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div></div>
 
-          <div class="field"><label>عکس و ویدئو</label><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">↑</div><strong>رسانه‌ها را انتخاب کن</strong><span>چند عکس یا ویدئو همزمان مجاز است</span><small>JPG · PNG · WEBP · HEIC/HEIF · MP4 · MOV · AVI · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div></div>
+          <div class="optional-row">
+            <label class="music-drop"><input id="music" type="file" accept="audio/*"><span>♫</span><div><strong>موسیقی پس‌زمینه</strong><small id="musicName">اختیاری</small></div></label>
+            <div class="color-row"><input id="brandColor" type="color" value="#7c5cff"><span id="colorHex">#7C5CFF</span></div>
+          </div>
 
-          <div class="field"><label>موسیقی پس‌زمینه <em>اختیاری</em></label><label class="music-drop"><input id="music" type="file" accept="audio/*"><span>🎵</span><div><strong>افزودن موسیقی</strong><small id="musicName">هنوز موسیقی انتخاب نشده</small></div></label></div>
-
-          <div class="button-row"><button id="scriptBtn" class="primary big">✦ ساخت تبلیغ با AI</button><button id="demoBtn" class="secondary">نمونه بازارک</button></div>
-          <div id="notice" class="notice"><b>نکته:</b> کلیدهای API در مرورگر نمایش داده نمی‌شوند و Worker روی Cloudflare آن‌ها را مصرف می‌کند.</div>
+          <div class="button-row"><button id="scriptBtn" class="primary big">✦ ساخت تبلیغ با AI</button><button id="demoBtn" class="secondary">نمونه</button></div>
         </aside>
 
         <section class="production card">
-          <div class="section-head"><div><small>مرحله ۲</small><h2>مرکز تولید</h2></div><span id="overallState" class="state-dot">● آماده</span></div>
+          <div class="section-head"><div><small>فرآیند</small><h2>مرکز تولید</h2></div><span id="overallState" class="state-dot">● آماده</span></div>
           <div class="progress-card">
-            <div class="progress-top"><div><strong id="progressTitle">آماده شروع</strong><small id="progressText">اطلاعاتت را وارد کن و ساخت تبلیغ را شروع کن.</small></div><b id="progressPercent">0%</b></div>
+            <div class="progress-top"><div><strong id="progressTitle">آماده شروع</strong><small id="progressText">اطلاعات را وارد کن و ساخت را شروع کن.</small></div><b id="progressPercent">0%</b></div>
             <div class="progress-track"><i id="bar"></i></div>
             <div id="stageGrid" class="stage-grid">${stages.map((s,i)=>`<div class="pipeline-stage ${i===0?"active":""}" data-stage="${i}"><div class="stage-number">${s[0]}</div><div><b>${s[1]}</b><small>${s[2]}</small></div><span class="stage-check">○</span></div>`).join("")}</div>
           </div>
 
-          <div class="live-log"><div class="log-head"><span>جزئیات عملیات</span><button id="clearLog" class="tiny-btn">پاک کردن</button></div><div id="log" class="log"><div class="log-line muted"><span>●</span> منتظر شروع پروژه...</div></div></div>
+          <details class="ops-details"><summary><span>جزئیات عملیات</span><em>نمایش</em></summary><div class="live-log"><div class="log-head"><span>وضعیت</span><button id="clearLog" class="tiny-btn">پاک کردن</button></div><div id="log" class="log"><div class="log-line muted"><span>●</span> منتظر شروع پروژه...</div></div></div></details>
 
-          <div class="script-panel"><div class="panel-title"><span>📝 سناریوی تولیدشده</span><button id="editScript" class="tiny-btn" disabled>ویرایش</button></div><textarea id="scriptEditor" disabled placeholder="سناریوی تبلیغاتی بعد از تحلیل اینجا قرار می‌گیرد..."></textarea><div class="script-meta"><span id="scriptCount">0 کلمه</span><span id="scriptSource">منبع: —</span></div></div>
+          <div class="script-panel"><div class="panel-title"><span>📝 سناریو</span><button id="editScript" class="tiny-btn" disabled>ویرایش</button></div><textarea id="scriptEditor" disabled placeholder="سناریوی تبلیغاتی اینجا قرار می‌گیرد..."></textarea><div class="script-meta"><span id="scriptCount">0 کلمه</span><span id="scriptSource">منبع: —</span></div></div>
         </section>
 
         <section class="result card">
-          <div class="section-head"><div><small>مرحله ۳</small><h2>پیش‌نمایش و خروجی</h2></div><span id="outputState">هنوز ساخته نشده</span></div>
-          <div id="stage" class="video-stage"><div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div></div>
-          <div class="output-actions"><button id="renderBtn" class="primary" disabled>▶ ساخت ویدئو</button><button id="downloadBtn" class="secondary" disabled>⬇ دانلود</button></div>
-          <div class="result-metrics"><div><span>🎙️</span><b id="voiceState">گویندگی</b><small id="voiceDetail">آماده</small></div><div><span>🎵</span><b>موسیقی</b><small id="musicState">اختیاری</small></div><div><span>📐</span><b>خروجی</b><small>720 × 1280</small></div></div>
+          <div class="section-head"><div><small>خروجی</small><h2>پیش‌نمایش</h2></div><span id="outputState">آماده ساخت</span></div>
+          <div id="stage" class="video-stage"><div class="empty"><div>✦</div><strong>ویدئوی نهایی اینجا نمایش داده می‌شود</strong><small>خروجی عمودی 9:16 با صدا و زیرنویس</small></div></div>
+          <div class="output-actions"><button id="renderBtn" class="primary" disabled>▶ ساخت ویدئو</button><button id="downloadBtn" class="secondary" disabled>↓ دانلود</button></div>
+          <div class="result-metrics"><div><span>◉</span><b id="voiceState">گویندگی</b><small id="voiceDetail">آماده</small></div><div><span>♫</span><b>موسیقی</b><small id="musicState">اختیاری</small></div><div><span>9:16</span><b>خروجی</b><small>720 × 1280</small></div></div>
           <div id="resultActions" class="result-extra" hidden><button id="rerenderBtn" class="secondary">↻ ساخت دوباره</button><button id="newBtn" class="ghost">＋ پروژه جدید</button></div>
         </section>
       </section>
-
-      <section class="how card"><div><span class="how-icon">💡</span><div><h3>چطور بهترین نتیجه را بگیری؟</h3><p>نام محصول، مخاطب، مزیت اصلی، شهر/بازار هدف و دعوت به اقدام را در توضیحات بنویس. تصاویر واقعی محصول را هم به ترتیب اهمیت اضافه کن.</p></div></div><div class="how-list"><span>۱. اطلاعات دقیق</span><span>۲. رسانه‌های خوب</span><span>۳. سناریوی AI</span><span>۴. گویندگی و رندر</span></div></section>
     </main>
-    <footer>AD Maker AI · ساخت تبلیغات کوتاه برای وب و شبکه‌های اجتماعی</footer>
   </div>`;
   setDir();
 }
@@ -472,9 +477,6 @@ async function renderVideo(voiceBlob) {
   if (!window.MediaRecorder) throw new Error("مرورگر فعلی ساخت ویدئو را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
   if (!canvas.captureStream) throw new Error("مرورگر فعلی ضبط Canvas را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
 
-  // Normalize every selected asset to something the browser renderer can decode.
-  // Native browser decoding is used first; HEIC/HEIF images and unsupported videos
-  // are converted locally in the browser only when needed.
   const media = [];
   const urls = [];
   for (const f of state.assets) {
@@ -484,196 +486,168 @@ async function renderVideo(voiceBlob) {
     if (prepared.kind === "image") {
       media.push({ type: "image", el: prepared.element, name: f.name, duration: 1 });
       log(`تصویر «${f.name}» آماده شد.`, "success");
-      continue;
-    }
-    if (prepared.kind === "video") {
+    } else if (prepared.kind === "video") {
       const v = prepared.element;
       media.push({ type: "video", el: v, name: f.name, duration: Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 1 });
       log(`ویدئوی «${f.name}» آماده شد${prepared.converted ? " (تبدیل خودکار)" : ""}.`, "success");
-      continue;
+    } else {
+      throw new Error(`فرمت «${f.name}» در این مرورگر قابل پردازش نیست.`);
     }
-    throw new Error(`فرمت «${f.name}» در این مرورگر قابل پردازش نیست. فایل را به JPG/PNG یا MP4 تبدیل کن.`);
   }
 
   let audioCtx = null, dest = null, voiceSource = null, musicSource = null;
   try {
     const music = $("#music").files[0];
-    if (voiceBlob || music) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) throw new Error("مرورگر صوت را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
-      audioCtx = new AC();
-      if (audioCtx.state === "suspended") await audioCtx.resume();
-      dest = audioCtx.createMediaStreamDestination();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) throw new Error("مرورگر صوت را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
+    audioCtx = new AC();
+    if (audioCtx.state === "suspended") await audioCtx.resume();
+    dest = audioCtx.createMediaStreamDestination();
 
-      if (voiceBlob) {
-        let buf;
-        try {
-          buf = await audioCtx.decodeAudioData(await voiceBlob.arrayBuffer());
-        } catch (_) {
-          throw new Error("صدای گویندگی قابل خواندن نیست. دوباره گویندگی را بساز.");
-        }
-        voiceSource = audioCtx.createBufferSource();
-        voiceSource.buffer = buf;
-        voiceSource.connect(dest);
-        // Local monitor is intentionally disabled: it can cause echo while recording.
-      }
+    let voiceBuf;
+    try { voiceBuf = await audioCtx.decodeAudioData(await voiceBlob.arrayBuffer()); }
+    catch (_) { throw new Error("صدای گویندگی قابل خواندن نیست. دوباره گویندگی را بساز."); }
+    if (!voiceBuf?.duration) throw new Error("مدت صدای گویندگی مشخص نشد.");
 
-      if (music) {
-        let buf;
-        try {
-          const normalizedMusic = await prepareAudioFile(music);
-          buf = await audioCtx.decodeAudioData(await normalizedMusic.arrayBuffer());
-        } catch (_) {
-          throw new Error("فایل موسیقی قابل خواندن یا تبدیل نیست. MP3/WAV/M4A را امتحان کن.");
-        }
-        musicSource = audioCtx.createBufferSource();
-        musicSource.buffer = buf;
-        musicSource.loop = true;
-        const gain = audioCtx.createGain();
-        gain.gain.value = 0.12;
-        musicSource.connect(gain).connect(dest);
+    voiceSource = audioCtx.createBufferSource();
+    voiceSource.buffer = voiceBuf;
+    voiceSource.connect(dest);
+
+    if (music) {
+      let buf;
+      try {
+        const normalizedMusic = await prepareAudioFile(music);
+        buf = await audioCtx.decodeAudioData(await normalizedMusic.arrayBuffer());
+      } catch (_) {
+        throw new Error("فایل موسیقی قابل خواندن یا تبدیل نیست. MP3/WAV/M4A را امتحان کن.");
       }
+      musicSource = audioCtx.createBufferSource();
+      musicSource.buffer = buf;
+      musicSource.loop = true;
+      const gain = audioCtx.createGain();
+      gain.gain.value = 0.10;
+      musicSource.connect(gain).connect(dest);
+    }
+
+    // Never cut narration. If ElevenLabs takes longer than the selected target,
+    // the video follows the full narration instead of ending early.
+    const requestedTotal = Math.max(15, Number(state.duration) || 15);
+    const voiceDuration = voiceBuf.duration;
+    const total = Math.max(requestedTotal, voiceDuration + 0.35) * 1000;
+    if (voiceDuration > requestedTotal + 0.5) {
+      log(`گویندگی ${Math.ceil(voiceDuration)} ثانیه است؛ ویدئو برای پخش کامل متن تا ${Math.ceil(total / 1000)} ثانیه ادامه پیدا می‌کند.`, "info");
     }
 
     const videoStream = canvas.captureStream(30);
-    const tracks = [...videoStream.getVideoTracks()];
-    if (dest) tracks.push(...dest.stream.getAudioTracks());
+    const tracks = [...videoStream.getVideoTracks(), ...dest.stream.getAudioTracks()];
     const stream = new MediaStream(tracks);
-
-    const candidates = [
-      "video/webm;codecs=vp9,opus",
-      "video/webm;codecs=vp8,opus",
-      "video/webm"
-    ];
+    const candidates = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
     const mime = candidates.find(x => MediaRecorder.isTypeSupported(x));
     if (!mime) throw new Error("این مرورگر قالب خروجی WebM را پشتیبانی نمی‌کند. آخرین Chrome را امتحان کن.");
 
-    const rec = new MediaRecorder(stream, {
-      mimeType: mime,
-      videoBitsPerSecond: 5000000,
-      audioBitsPerSecond: 128000
-    });
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 5000000, audioBitsPerSecond: 128000 });
     const chunks = [];
     const done = new Promise((resolve, reject) => {
-      rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
       rec.onerror = e => reject(e.error || new Error("MediaRecorder error"));
       rec.onstop = () => {
         const blob = new Blob(chunks, { type: mime });
-        if (!blob.size) reject(new Error("فایل ویدئو خالی ساخته شد."));
-        else resolve(blob);
+        if (!blob.size) reject(new Error("فایل ویدئو خالی ساخته شد.")); else resolve(blob);
       };
     });
 
-    const lines = state.script.split(/\n+/).map(x => x.trim()).filter(Boolean);
-    const total = Math.max(3, Number(state.duration) || 15) * 1000;
-    const brand = $("#brand").value.trim();
-
-    // Every selected media item gets its own scene. The old renderer selected the
-    // scene from the number of script lines, so a short two-line script could make
-    // eight uploaded photos collapse into only two visible photos. We now divide
-    // the full duration evenly across all prepared assets, independently of script length.
     const sceneCount = media.length || 1;
     const sceneDuration = total / sceneCount;
-    log(`${sceneCount} صحنه برای ${Math.round(total / 1000)} ثانیه تنظیم شد؛ هر رسانه حدود ${Math.max(1, Math.round(sceneDuration / 1000))} ثانیه نمایش داده می‌شود.`, "success");
+    log(`${sceneCount} صحنه برای ${Math.round(total / 1000)} ثانیه تنظیم شد.`, "success");
+    const captions = buildCaptionTimeline(state.script, voiceDuration);
     const start = performance.now();
-    let started = false;
 
     const sceneAt = elapsed => {
       if (!media.length) return { item: null, index: 0, progress: 0 };
-      const safeElapsed = Math.min(Math.max(0, elapsed), Math.max(0, total - 1));
-      const raw = safeElapsed / sceneDuration;
+      const safe = Math.min(Math.max(0, elapsed), Math.max(0, total - 1));
+      const raw = safe / sceneDuration;
       const index = Math.min(sceneCount - 1, Math.floor(raw));
       return { item: media[index], index, progress: Math.min(1, Math.max(0, raw - index)) };
     };
 
-    // Draw one complete frame immediately so the recording never starts with a blank canvas.
-    const drawFrame = (elapsed) => {
+    const drawFrame = elapsed => {
       const p = Math.min(1, elapsed / total);
       const scene = sceneAt(elapsed);
       const item = scene.item;
       const sceneP = scene.progress;
-      const lineIndex = lines.length ? Math.min(lines.length - 1, Math.floor(p * lines.length)) : 0;
+      const caption = captionAt(captions, Math.min(elapsed, voiceDuration * 1000), voiceDuration * 1000);
 
       ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = "#050507";
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "#05050a"; ctx.fillRect(0, 0, W, H);
 
-      if (item && item.el) {
+      if (item?.el) {
         const el = item.el;
         if (item.type === "video") {
           const duration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : item.duration;
           const target = Math.min(Math.max(0, sceneP * duration), Math.max(0, duration - 0.05));
-          if (Math.abs((el.currentTime || 0) - target) > 0.20) {
-            try { el.currentTime = target; } catch (_) {}
-          }
+          if (Math.abs((el.currentTime || 0) - target) > 0.18) { try { el.currentTime = target; } catch (_) {} }
           if (el.paused) el.play().catch(() => {});
         }
         const ew = el.videoWidth || el.naturalWidth || W;
         const eh = el.videoHeight || el.naturalHeight || H;
         const cover = Math.max(W / ew, H / eh);
-        const zoom = 1 + 0.08 * sceneP;
-        const iw = ew * cover * zoom;
-        const ih = eh * cover * zoom;
-        const drift = Math.sin(sceneP * Math.PI * 2) * 14;
-        ctx.globalAlpha = 0.96;
-        ctx.drawImage(el, (W - iw) / 2 + drift, (H - ih) / 2, iw, ih);
+        const zoom = 1.04 + 0.055 * sceneP;
+        const iw = ew * cover * zoom, ih = eh * cover * zoom;
+        const drift = Math.sin(sceneP * Math.PI) * 12;
         ctx.globalAlpha = 1;
+        ctx.drawImage(el, (W - iw) / 2 + drift, (H - ih) / 2, iw, ih);
       } else {
-        // Fallback scene keeps the project renderable when Android exposes a
-        // virtual/unsupported gallery image. Audio and the rest of the ad are
-        // still rendered normally.
         const g = ctx.createLinearGradient(0, 0, W, H);
-        g.addColorStop(0, state.brandColor);
-        g.addColorStop(1, "#07070b");
+        g.addColorStop(0, state.brandColor); g.addColorStop(1, "#090912");
         ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-        ctx.fillStyle = "rgba(255,255,255,.10)";
-        ctx.fillRect(55, 340, W - 110, 470);
-        ctx.fillStyle = "#fff";
-        ctx.font = "900 58px Vazirmatn,Arial";
-        ctx.textAlign = "center";
-        ctx.fillText(brand, W / 2, 525);
-        ctx.font = "600 27px Vazirmatn,Arial";
-        ctx.fillStyle = "rgba(255,255,255,.78)";
-        ctx.fillText("تبلیغ حرفه‌ای با AD Maker AI", W / 2, 590);
       }
 
-      // Cinematic overlays and a visible progress animation make a single image behave like a real video scene.
-      const grad = ctx.createLinearGradient(0, 0, 0, H);
-      grad.addColorStop(0, hexAlpha(state.brandColor, .72));
-      grad.addColorStop(.34, "rgba(0,0,0,.08)");
-      grad.addColorStop(.68, "rgba(0,0,0,.24)");
-      grad.addColorStop(1, "rgba(0,0,0,.94)");
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, W, H);
+      // Premium cinematic grading: brand-tinted light, vignette and depth.
+      const top = ctx.createLinearGradient(0, 0, 0, H);
+      top.addColorStop(0, hexAlpha(state.brandColor, .52));
+      top.addColorStop(.34, "rgba(4,4,9,.03)");
+      top.addColorStop(.66, "rgba(3,3,8,.16)");
+      top.addColorStop(1, "rgba(2,2,7,.88)");
+      ctx.fillStyle = top; ctx.fillRect(0, 0, W, H);
+
+      const vignette = ctx.createRadialGradient(W/2, H/2, 260, W/2, H/2, 760);
+      vignette.addColorStop(0, "rgba(0,0,0,0)"); vignette.addColorStop(1, "rgba(0,0,0,.42)");
+      ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
 
       ctx.direction = state.language === "en" ? "ltr" : "rtl";
       ctx.textAlign = "center";
-      ctx.fillStyle = "#fff";
-      ctx.font = "900 44px Vazirmatn,Arial";
-      ctx.fillText(brand, W / 2, 150);
 
-      ctx.fillStyle = "#fff";
-      ctx.font = "800 31px Vazirmatn,Arial";
-      wrap(ctx, lines[lineIndex] || brand, W / 2, 560, 600, 52, 5);
+      // Small brand badge — avoids the huge repeated title seen in the previous output.
+      roundRect(ctx, 38, 44, W - 76, 58, 20, "rgba(8,8,15,.52)", "rgba(255,255,255,.16)");
+      ctx.fillStyle = "#fff"; ctx.font = "800 25px Vazirmatn,Arial";
+      ctx.fillText(brandText(), W / 2, 81);
 
-      ctx.fillStyle = "rgba(255,255,255,.86)";
-      ctx.font = "600 18px Vazirmatn,Arial";
-      ctx.fillText(`${Math.round(p * 100)}%`, W / 2, 1160);
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(70, 1205, (W - 140) * p, 5);
-      ctx.fillStyle = "#ddd4ff";
-      ctx.font = "600 19px Vazirmatn,Arial";
-      ctx.fillText("AD Maker AI", W / 2, 1240);
+      // Scene counter.
+      ctx.textAlign = state.language === "en" ? "right" : "left";
+      ctx.fillStyle = "rgba(255,255,255,.76)"; ctx.font = "700 16px Vazirmatn,Arial";
+      ctx.fillText(`${String(scene.index + 1).padStart(2,"0")} / ${String(sceneCount).padStart(2,"0")}`, state.language === "en" ? W - 42 : 42, 138);
 
+      // Readable glass subtitle card with compact lines.
+      const cardX = 42, cardW = W - 84, cardH = caption ? 238 : 150, cardY = H - 390;
+      roundRect(ctx, cardX, cardY, cardW, cardH, 28, "rgba(8,8,14,.62)", "rgba(255,255,255,.14)");
+      ctx.fillStyle = state.brandColor; roundRect(ctx, cardX + 24, cardY + 24, 8, cardH - 48, 4, state.brandColor, null);
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(255,255,255,.64)"; ctx.font = "700 14px Vazirmatn,Arial";
+      ctx.fillText(styleLabel(), W / 2, cardY + 52);
+      ctx.fillStyle = "#fff"; ctx.font = "800 28px Vazirmatn,Arial";
+      if (caption) wrap(ctx, caption.text, W / 2, cardY + 98, cardW - 78, 42, 4);
+
+      // Fine progress rail.
+      ctx.fillStyle = "rgba(255,255,255,.18)"; roundRect(ctx, 42, H - 88, W - 84, 6, 3, "rgba(255,255,255,.18)", null);
+      ctx.fillStyle = state.brandColor; roundRect(ctx, 42, H - 88, (W - 84) * p, 6, 3, state.brandColor, null);
+      ctx.fillStyle = "rgba(255,255,255,.72)"; ctx.font = "700 15px Vazirmatn,Arial";
+      ctx.fillText(`${Math.round(p * 100)}%`, W / 2, H - 50);
       setProgress(66 + p * 32, "رندر ویدئو", `${Math.round(p * 100)}٪ از ویدئو ساخته شد`);
     };
 
     drawFrame(0);
-    // Start audio and recording only after the first valid frame exists.
-    if (voiceSource) voiceSource.start(0);
-    if (musicSource) musicSource.start(0);
+    voiceSource.start(0); if (musicSource) musicSource.start(0);
     rec.start(250);
-    started = true;
 
     await new Promise((resolve, reject) => {
       let raf = 0;
@@ -684,13 +658,11 @@ async function renderVideo(voiceBlob) {
           if (elapsed < total) raf = requestAnimationFrame(tick);
           else {
             cancelAnimationFrame(raf);
-            // Keep the final frame in the recording for a short moment.
-            setTimeout(() => { if (rec.state !== "inactive") rec.stop(); resolve(); }, 120);
+            drawFrame(total - 1);
+            setTimeout(() => { if (rec.state !== "inactive") rec.stop(); resolve(); }, 180);
           }
         } catch (e) {
-          cancelAnimationFrame(raf);
-          if (rec.state !== "inactive") rec.stop();
-          reject(e);
+          cancelAnimationFrame(raf); if (rec.state !== "inactive") rec.stop(); reject(e);
         }
       };
       raf = requestAnimationFrame(tick);
@@ -710,55 +682,43 @@ async function renderVideo(voiceBlob) {
   }
 }
 
-
-let ffmpegPromise = null;
-
-async function loadHeicDecoder() {
-  if (window.HeicTo) return window.HeicTo;
-  if (window.__adMakerHeicPromise) return window.__adMakerHeicPromise;
-  window.__adMakerHeicPromise = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/heic-to@1.5.2/dist/iife/heic-to.js";
-    script.async = true;
-    script.onload = () => window.HeicTo ? resolve(window.HeicTo) : reject(new Error("HEIC decoder loaded but is unavailable."));
-    script.onerror = () => reject(new Error("دانلود مبدل HEIC ناموفق بود."));
-    document.head.appendChild(script);
+function buildCaptionTimeline(text, durationSeconds) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (!clean) return [];
+  const sentences = clean.split(/(?<=[.!?؟،؛])\s+/).filter(Boolean);
+  const chunks = [];
+  for (const sentence of sentences) {
+    const words = sentence.trim().split(/\s+/).filter(Boolean);
+    for (let i = 0; i < words.length; i += 9) chunks.push(words.slice(i, i + 9).join(" "));
+  }
+  const list = chunks.length ? chunks : [clean];
+  const totalWords = list.reduce((n, x) => n + x.split(/\s+/).length, 0);
+  let cursor = 0;
+  return list.map(text => {
+    const words = text.split(/\s+/).length;
+    const start = cursor / totalWords;
+    cursor += words;
+    return { text, start, end: cursor / totalWords };
   });
-  return window.__adMakerHeicPromise;
 }
 
-async function convertHeic(file) {
-  const HeicTo = await loadHeicDecoder();
-  if (!await HeicTo.isHeic(file)) throw new Error("این فایل HEIC/HEIF نیست.");
-  const blob = await HeicTo({ blob: file, type: "image/jpeg", quality: 0.92 });
-  const img = new Image();
-  img.decoding = "async";
-  img.src = URL.createObjectURL(blob);
-  await waitForImage(img, file.name || "HEIC");
-  return { element: img, blob };
+function captionAt(timeline, elapsedMs, durationMs) {
+  if (!timeline.length) return null;
+  const duration = Math.max(1, Number(durationMs) || 1);
+  const p = Math.min(0.9999, Math.max(0, elapsedMs / duration));
+  return timeline.find(x => p >= x.start && p < x.end) || timeline[timeline.length - 1];
 }
 
-async function loadFfmpeg() {
-  if (ffmpegPromise) return ffmpegPromise;
-  ffmpegPromise = (async () => {
-    log("فرمت این ویدئو برای Chrome مستقیم قابل پخش نبود؛ مبدل ویدئو در حال آماده‌سازی است...", "info");
-    const ffmpegModule = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js");
-    const utilModule = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js");
-    const { FFmpeg } = ffmpegModule;
-    const { toBlobURL } = utilModule;
-    const ffmpeg = new FFmpeg();
-    const base = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, "application/wasm"),
-      workerURL: await toBlobURL(`${base}/ffmpeg-core.worker.js`, "text/javascript")
-    });
-    return ffmpeg;
-  })().catch(e => {
-    ffmpegPromise = null;
-    throw e;
-  });
-  return ffmpegPromise;
+function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
+}
+
+function brandText() { return $("#brand")?.value?.trim() || "AD Maker AI"; }
+function styleLabel() {
+  return ({ cinematic: "CINEMATIC", modern: "MODERN", luxury: "PREMIUM", sales: "SMART SELLING", social: "SOCIAL" })[state.style] || "AD MAKER AI";
 }
 
 function safeExt(name, fallback = "bin") {
