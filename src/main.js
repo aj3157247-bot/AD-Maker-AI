@@ -407,8 +407,8 @@ async function analyzeUploadedVideo() {
     const size = Number(video.size || 0);
     if (!size) throw new Error("حجم ویدئو معتبر نیست.");
     const mimeType = String(video.type || "video/mp4");
-    const chunkSize = 4 * 1024 * 1024;
-    setProgress(12, "ایجاد نشست آپلود", "آپلود ویدئو به‌صورت قطعه‌ای شروع می‌شود…");
+    const chunkSize = 1024 * 1024;
+    setProgress(12, "ایجاد نشست آپلود", "آپلود پایدار ویدئو به‌صورت قطعه‌ای شروع می‌شود…");
     log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ آپلود قطعه‌ای فعال شد.`);
 
     const session = await requestJson(`${window.location.origin}/api/analyze-video/upload-start`, {
@@ -445,7 +445,7 @@ async function analyzeUploadedVideo() {
               "Content-Length": String(chunk.size)
             },
             body: chunk
-          }, 60000);
+          }, 90000);
           if (isFinal) {
             var fileInfo = uploaded;
             offset = size;
