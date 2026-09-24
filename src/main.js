@@ -474,7 +474,41 @@ async function analyzeUploadedVideo() {
     };
     setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
     log("مرحله ۳: تحلیل واقعی ویدئو با Gemini Interactions و اجرای پس‌زمینه شروع شد.");
-    const started = await requestJson(`${window.location.origin}/api/analyze-video/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formStart) }, 60000);
+    let started;
+    const currentUri = String(formStart.fileUri || "");
+    const useInlineFallback = currentUri.startsWith("blob:");
+    if (useInlineFallback && size <= 20 * 1024 * 1024) {
+      setProgress(68, "تحلیل محتوای ویدئو", "شناسه فایل Gemini قابل استفاده نبود؛ مسیر مستقیم ویدئو فعال شد…");
+      log("شناسه فایل Gemini به‌صورت blob برگشت؛ تحلیل مستقیم بدون URI شروع می‌شود.", "info");
+      const inlineForm = new FormData();
+      inlineForm.append("video", video, video.name || "site-demo.mp4");
+      inlineForm.append("brand", $("#brand")?.value.trim() || "");
+      inlineForm.append("description", $("#desc")?.value.trim() || "");
+      inlineForm.append("language", state.language);
+      inlineForm.append("duration", String(state.duration));
+      inlineForm.append("platform", platformLabel(state.platform));
+      started = await requestJson(`${window.location.origin}/api/analyze-video/start-inline`, { method: "POST", body: inlineForm }, 120000);
+    } else {
+      try {
+        started = await requestJson(`${window.location.origin}/api/analyze-video/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formStart) }, 60000);
+      } catch (startError) {
+        const msg = String(startError?.message || startError);
+        if (size <= 20 * 1024 * 1024 && /unsupported file uri|unsupported.*uri|blob:\/\//i.test(msg)) {
+          setProgress(68, "تحلیل محتوای ویدئو", "مسیر جایگزین مستقیم فعال شد…");
+          log("Gemini URI قابل استفاده نبود؛ مسیر مستقیم ویدئو به‌صورت خودکار فعال شد.", "info");
+          const inlineForm = new FormData();
+          inlineForm.append("video", video, video.name || "site-demo.mp4");
+          inlineForm.append("brand", $("#brand")?.value.trim() || "");
+          inlineForm.append("description", $("#desc")?.value.trim() || "");
+          inlineForm.append("language", state.language);
+          inlineForm.append("duration", String(state.duration));
+          inlineForm.append("platform", platformLabel(state.platform));
+          started = await requestJson(`${window.location.origin}/api/analyze-video/start-inline`, { method: "POST", body: inlineForm }, 120000);
+        } else {
+          throw startError;
+        }
+      }
+    }
 
     // Long video analysis now runs as a Gemini background Interaction. The
     // Worker returns immediately with an interaction id, and the browser polls
@@ -526,7 +560,8 @@ async function analyzeUploadedVideo() {
     // Mark it complete before the script stage starts so the UI never shows
     // a misleading 42% with stage 01 still active.
     setStage(0, "done");
-    setProgress(18, "اطلاعات آماده", "تحلیل ویدئو کامل شد؛ حالا سناریو ساخته می‌شود.");
+    setStage(1, "active");
+    setProgress(18, "سناریو", "تحلیل ویدئو کامل شد؛ حالا سناریو آماده است.");
     return result;
   } catch (e) {
     const detail = String(e?.message || e);
