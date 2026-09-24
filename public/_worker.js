@@ -51,14 +51,18 @@ Requirements:
           const expanded = await openRouterScript(env.OPENROUTER_API_KEY, expandPrompt, request, 2400);
           if (expanded && wordCount(expanded) > count) script = expanded;
         }
-        return json({ script, fallback: false, provider: "openrouter", targetWords, duration });
+        script = normalizeScript(script, targetWords);
+        return json({ script, fallback: false, provider: "openrouter", targetWords, duration, wordCount: wordCount(script) });
       }
     }
 
     if (env.AI) {
       const out = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", { prompt, max_tokens: Math.min(2400, Math.max(700, targetWords * 2)) });
       const s = (out?.response || "").trim();
-      if (s) return json({ script: s, fallback: false, provider: "cloudflare-ai", targetWords, duration });
+      if (s) {
+        const normalized = normalizeScript(s, targetWords);
+        return json({ script: normalized, fallback: false, provider: "cloudflare-ai", targetWords, duration, wordCount: wordCount(normalized) });
+      }
     }
 
     return json({
@@ -152,12 +156,14 @@ async function openRouterScript(apiKey, prompt, request, maxTokens = 2400) {
 async function tts(request, env) {
   try {
     const b = await request.json();
-    const text = String(b.text || '').trim();
-    if (!text) return json({ error: 'text_required' }, 400);
+    const text = normalizeTtsText(b.text);
+    if (!text) return json({ audio: null, fallback: true, error: 'text_required' }, 400);
     if (!env.ELEVENLABS_API_KEY) return json({ audio: null, fallback: true, error: 'elevenlabs_missing_api_key' }, 503);
 
-    // Eleven v3 is the current expressive multilingual model and is a better fit
-    // for Afghan Dari/Pashto than the older Multilingual v2 model.
+    // ElevenLabs limits a single TTS request to 10,000 characters on this setup.
+    // Long advertisements are therefore split into natural sentence/word chunks,
+    // each rendered with the same voice/model. The browser joins the returned audio.
+    const chunks = splitTtsText(text, 8500);
     const configuredVoice = env.ELEVENLABS_VOICE_ID || '';
     const voices = [...new Set([configuredVoice, 'JBFqnCBsd6RMkjVDRZzb'].filter(Boolean))];
     const models = ['eleven_v3', 'eleven_multilingual_v2'];
@@ -165,24 +171,35 @@ async function tts(request, env) {
 
     for (const voice of voices) {
       for (const model of models) {
-        const result = await elevenLabsTTS(env.ELEVENLABS_API_KEY, voice, model, text);
-        if (result.ok) return json({ audio: result.audio, mime: 'audio/mpeg', fallback: false, provider: 'elevenlabs', model, voice });
-        lastError = result;
+        const parts = [];
+        let failed = false;
+        for (let i = 0; i < chunks.length; i++) {
+          const result = await elevenLabsTTS(env.ELEVENLABS_API_KEY, voice, model, chunks[i]);
+          if (!result.ok) {
+            lastError = result;
+            failed = true;
+            break;
+          }
+          parts.push(result.audio);
+        }
+        if (!failed && parts.length) {
+          if (parts.length === 1) {
+            return json({ audio: parts[0], mime: 'audio/mpeg', fallback: false, provider: 'elevenlabs', model, voice, chunks: 1, characters: text.length });
+          }
+          return json({ audioParts: parts, mime: 'audio/mpeg', fallback: false, provider: 'elevenlabs', model, voice, chunks: parts.length, characters: text.length });
+        }
 
-        // Do not retry a bad key/quota/rate-limit with another model; it cannot help.
-        if ([401, 402, 403, 429].includes(result.status)) {
+        // Authentication, quota and rate-limit errors cannot be fixed by switching models.
+        if ([401, 402, 403, 429].includes(lastError?.status)) {
           return json({
             audio: null,
             fallback: true,
-            error: result.code || 'elevenlabs_request_failed',
-            detail: result.message || 'ElevenLabs request failed.',
-            status: result.status,
-            requestId: result.requestId || null
-          }, result.status === 429 ? 429 : 502);
+            error: lastError.code || 'elevenlabs_request_failed',
+            detail: lastError.message || 'ElevenLabs request failed.',
+            status: lastError.status,
+            requestId: lastError.requestId || null
+          }, lastError.status === 429 ? 429 : 502);
         }
-
-        // A missing/inaccessible voice can be solved by trying the known public
-        // fallback voice. Other validation errors are worth trying the next model.
       }
     }
 
@@ -192,11 +209,49 @@ async function tts(request, env) {
       error: lastError?.code || 'elevenlabs_request_failed',
       detail: lastError?.message || 'ElevenLabs could not generate the requested speech.',
       status: lastError?.status || 422,
-      requestId: lastError?.requestId || null
+      requestId: lastError?.requestId || null,
+      characters: text.length,
+      chunks: chunks.length
     }, 502);
   } catch (e) {
     return json({ audio: null, fallback: true, error: 'tts_server_error', detail: String(e?.message || e) }, 500);
   }
+}
+
+function normalizeTtsText(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitTtsText(text, maxChars = 8500) {
+  const clean = normalizeTtsText(text);
+  if (clean.length <= maxChars) return [clean];
+  const sentences = clean.match(/[^.!?؟؛。！？]+[.!?؟؛。！？]+|[^.!?؟؛。！？]+$/gu) || [clean];
+  const chunks = [];
+  let current = '';
+  for (const sentence of sentences) {
+    const part = sentence.trim();
+    if (!part) continue;
+    if ((current + ' ' + part).trim().length <= maxChars) {
+      current = (current + ' ' + part).trim();
+      continue;
+    }
+    if (current) chunks.push(current);
+    if (part.length <= maxChars) {
+      current = part;
+    } else {
+      const words = part.split(/\s+/);
+      current = '';
+      for (const word of words) {
+        if ((current + ' ' + word).trim().length <= maxChars) current = (current + ' ' + word).trim();
+        else { if (current) chunks.push(current); current = word; }
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.filter(Boolean);
 }
 
 async function elevenLabsTTS(apiKey, voice, model, text) {
@@ -230,6 +285,21 @@ async function elevenLabsTTS(apiKey, voice, model, text) {
   } catch (e) {
     return { ok: false, status: 503, code: 'elevenlabs_network_error', message: String(e?.message || e) };
   }
+}
+
+function normalizeScript(text, targetWords) {
+  let clean = String(text || '')
+    .replace(/^\s*(title|script|voice[- ]?over|سناریو|متن|گویندگی)\s*[:：-]\s*/i, '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const maxWords = Math.min(900, Math.max(45, Math.ceil(Number(targetWords || 35) * 1.35)));
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return clean;
+  const shortened = words.slice(0, maxWords).join(' ');
+  const lastStop = Math.max(shortened.lastIndexOf('.'), shortened.lastIndexOf('؟'), shortened.lastIndexOf('!'), shortened.lastIndexOf('؛'), shortened.lastIndexOf('،'));
+  if (lastStop > shortened.length * 0.72) return shortened.slice(0, lastStop + 1).trim();
+  return shortened.trim() + '...';
 }
 
 function wordCount(text) {
