@@ -44,6 +44,16 @@ Requirements:
     if (env.OPENROUTER_API_KEY) {
       let script = await openRouterScript(env.OPENROUTER_API_KEY, prompt, request);
       if (script) {
+        // Some free models occasionally echo the instruction instead of the requested
+        // spoken script. Detect that before sending the text to ElevenLabs.
+        if (looksLikeMetaScript(script)) {
+          const repairPrompt = `Return ONLY the spoken advertising voice-over. Do not explain the task and do not mention prompts, word counts, target duration, instructions, or that you are an AI. Write approximately ${targetWords} words in ${lang}, using only facts supported by this user description:
+
+Brand: ${b.brand}
+User description: ${b.description}`;
+          const repaired = await openRouterScript(env.OPENROUTER_API_KEY, repairPrompt, request, 2600);
+          if (repaired && !looksLikeMetaScript(repaired)) script = repaired;
+        }
         const count = wordCount(script);
         // If a free model under-delivers badly on a long ad, ask once for a focused expansion.
         if (count < Math.max(35, Math.floor(targetWords * 0.68)) && targetWords >= 90) {
@@ -285,6 +295,17 @@ async function elevenLabsTTS(apiKey, voice, model, text) {
   } catch (e) {
     return { ok: false, status: 503, code: 'elevenlabs_network_error', message: String(e?.message || e) };
   }
+}
+
+function looksLikeMetaScript(text) {
+  const s = String(text || '').toLowerCase();
+  const markers = [
+    'we need to produce', 'must be about', 'target video duration', 'target spoken length',
+    'only spoken script', 'return only', 'voice-over script in natural', 'word count',
+    'do not include titles', 'as an ai', 'as an assistant'
+  ];
+  const hits = markers.filter(x => s.includes(x)).length;
+  return hits >= 2 || /\b\d+\s*words?\b/i.test(s) && /must|target|script/i.test(s);
 }
 
 function normalizeScript(text, targetWords) {
