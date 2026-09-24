@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "3.3.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "3.4.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -157,7 +157,9 @@ async function startVideoAnalysis(request, env) {
     const b = await request.json();
     const fileName = String(b.fileName || "");
     const fileUri = String(b.fileUri || "");
-    if (!/^files\/[A-Za-z0-9._-]+$/.test(fileName) || !fileUri) return json({ error: "gemini_file_required", detail: "فایل آماده Gemini برای شروع تحلیل مشخص نشده است." }, 400);
+    if (!/^files\/[A-Za-z0-9._-]+$/.test(fileName) || !fileUri) {
+      return json({ error: "gemini_file_required", detail: "فایل آماده Gemini برای شروع تحلیل مشخص نشده است." }, 400);
+    }
 
     const brand = String(b.brand || "").trim();
     const description = String(b.description || "").trim();
@@ -165,9 +167,13 @@ async function startVideoAnalysis(request, env) {
     const duration = Math.max(15, Math.min(300, Number(b.duration) || 60));
     const platform = String(b.platform || "YouTube Shorts");
     const mime = String(b.mimeType || "video/mp4");
-    const langName = { en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian", ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" }[language] || "Persian";
+    const langName = {
+      en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian",
+      ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek"
+    }[language] || "Persian";
     const targetWords = Math.max(35, Math.min(900, Math.round(duration * 2.2)));
-    const prompt = `Analyze this product/site demonstration video for AD Maker AI. The video may show a website or app such as a marketplace. Identify what is visibly demonstrated, in order, with approximate timestamps. Read visible UI text when possible. Do not invent features that are not shown or stated.
+
+    const prompt = `Analyze this product/site demonstration video for AD Maker AI. The video may show a website or app such as a marketplace. Carefully inspect the actual video frames and visible UI text, and describe what is visibly demonstrated in order with approximate timestamps. Do not invent features that are not shown or stated.
 
 Brand: ${brand || "Unknown"}
 User description: ${description || "None provided"}
@@ -176,7 +182,7 @@ Output language: ${langName}
 Target advertisement duration: ${duration} seconds
 Target voice-over length: about ${targetWords} words.
 
-Return ONLY valid JSON with this exact shape:
+Return ONLY a JSON object with this exact shape:
 {
   "summary": "short factual summary",
   "facts": ["only verified facts from the video or user description"],
@@ -186,27 +192,97 @@ Return ONLY valid JSON with this exact shape:
 
 For the script: narrate the actual sequence of the video so the voice matches what viewers see. Use a strong opening, explain the demonstrated features in order, add transitions, and finish with a call to action. Never invent prices, discounts, statistics, ratings, guarantees, users, locations, or features. If a feature is uncertain, omit it. Return only the JSON object.`;
 
+    // Use the stable generateContent + Files API path for video understanding.
+    // The Interactions API can currently surface an internal blob://genai-api/blobref
+    // URI error for some uploaded videos. Google documents generateContent with
+    // Gemini Files API URIs for video understanding and agentic media processing.
     const model = env.GEMINI_MODEL || "gemini-3.8-flash";
-    const gen = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    const gen = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST",
-      headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json", "Api-Revision": "2026-05-20" },
+      headers: {
+        "x-goog-api-key": env.GEMINI_API_KEY,
+        "Content-Type": "application/json"
+      },
       body: JSON.stringify({
-        model,
-        background: true,
-        input: [
-          { type: "video", uri: fileUri, mime_type: mime, processing: "static" },
-          { type: "text", text: prompt }
-        ],
-        generation_config: { temperature: 0.35, max_output_tokens: 5000 }
+        contents: [{
+          role: "user",
+          parts: [
+            {
+              file_data: {
+                file_uri: fileUri,
+                mime_type: mime
+              },
+              media_processing: "AGENTIC"
+            },
+            { text: prompt }
+          ]
+        }],
+        generationConfig: {
+          temperature: 0.35,
+          maxOutputTokens: 5000,
+          responseMimeType: "application/json"
+        }
       })
     });
-    if (!gen.ok) return json({ error: "gemini_analysis_start_failed", detail: await safeGoogleError(gen), model }, gen.status || 502);
-    const interaction = await gen.json();
-    if (!interaction?.id) return json({ error: "gemini_interaction_missing", detail: "Gemini شناسه عملیات پس‌زمینه را برنگرداند.", model }, 502);
-    return json({ ok: true, interactionId: interaction.id, status: interaction.status || "in_progress", model });
+
+    if (!gen.ok) {
+      return json({ error: "gemini_analysis_failed", detail: await safeGoogleError(gen), model }, gen.status || 502);
+    }
+
+    const payload = await gen.json();
+    const text = extractGenerateContentText(payload);
+    if (!text) return json({ error: "gemini_analysis_empty", detail: "Gemini پاسخ متنی برای تحلیل ویدئو برنگرداند.", model }, 502);
+
+    let analysis;
+    try {
+      analysis = parseJsonObject(text);
+    } catch (e) {
+      return json({ error: "gemini_analysis_invalid_json", detail: `پاسخ Gemini JSON معتبر نبود: ${String(e?.message || e)}`, rawPreview: text.slice(0, 1200), model }, 502);
+    }
+
+    return json({
+      ok: true,
+      status: "completed",
+      model,
+      fileName,
+      fileUri,
+      analysis: normalizeVideoAnalysis(analysis)
+    });
   } catch (e) {
     return json({ error: "video_analysis_start_exception", detail: String(e?.message || e) }, 500);
   }
+}
+
+function extractGenerateContentText(payload) {
+  const parts = payload?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return "";
+  return parts.map(p => typeof p?.text === "string" ? p.text : "").filter(Boolean).join("\n").trim();
+}
+
+function parseJsonObject(text) {
+  let cleaned = String(text || "").trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  try { return JSON.parse(cleaned); } catch {}
+  const first = cleaned.indexOf("{");
+  const last = cleaned.lastIndexOf("}");
+  if (first >= 0 && last > first) return JSON.parse(cleaned.slice(first, last + 1));
+  throw new Error("JSON object not found");
+}
+
+function normalizeVideoAnalysis(value) {
+  const a = value && typeof value === "object" ? value : {};
+  const scenes = Array.isArray(a.scenes) ? a.scenes.map(s => ({
+    start: String(s?.start || ""),
+    end: String(s?.end || ""),
+    title: String(s?.title || ""),
+    description: String(s?.description || "")
+  })).filter(s => s.title || s.description || s.start || s.end) : [];
+  return {
+    summary: String(a.summary || ""),
+    facts: Array.isArray(a.facts) ? a.facts.map(x => String(x || "")).filter(Boolean) : [],
+    scenes,
+    script: String(a.script || "").trim()
+  };
 }
 
 function extractInteractionText(result) {
