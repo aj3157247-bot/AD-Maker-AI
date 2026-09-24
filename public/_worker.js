@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "2.1.0" });
+      return json({ ok: true, service: "AD Maker AI", version: "2.2.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
@@ -61,35 +61,81 @@ Requirements:
       if (s) return json({ script: s, fallback: false, provider: "cloudflare-ai", targetWords, duration });
     }
 
-    return json({ script: fallback(b), fallback: true, provider: "local", targetWords, duration });
+    return json({
+      script: fallback(b),
+      fallback: true,
+      provider: "local",
+      error: "no_ai_provider_configured",
+      detail: "هیچ سرویس AI در محیط Cloudflare در دسترس نیست. OPENROUTER_API_KEY یا binding مربوط به Cloudflare AI تنظیم نشده است.",
+      openrouterConfigured: Boolean(env.OPENROUTER_API_KEY),
+      cloudflareAIConfigured: Boolean(env.AI),
+      targetWords,
+      duration
+    });
   } catch (e) {
-    return json({ script: fallback({ brand: "AD Maker AI", description: "", language: "fa", duration: 15 }), fallback: true, error: "generation_failed" });
+    const code = e?.code || "generation_failed";
+    const detail = e?.message || "اتصال به سرویس تولید سناریو ناموفق بود.";
+    return json({
+      script: fallback({ brand: b?.brand || "AD Maker AI", description: b?.description || "", language: b?.language || "fa", duration }),
+      fallback: true,
+      provider: "local",
+      error: code,
+      detail,
+      status: e?.status || 500,
+      openrouterConfigured: Boolean(env.OPENROUTER_API_KEY),
+      cloudflareAIConfigured: Boolean(env.AI),
+      targetWords,
+      duration
+    });
   }
 }
 
 async function openRouterScript(apiKey, prompt, request, maxTokens = 2400) {
-  try {
-    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": new URL(request.url).origin,
-        "X-Title": "AD Maker AI"
-      },
-      body: JSON.stringify({
-        model: "openrouter/free",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.75,
-        max_tokens: maxTokens
-      })
-    });
-    if (!r.ok) return "";
-    const j = await r.json();
-    return j?.choices?.[0]?.message?.content?.trim() || "";
-  } catch (_) {
-    return "";
+  const models = [
+    "openrouter/free",
+    "nvidia/nemotron-3-ultra:free",
+    "google/gemma-4-31b-it:free"
+  ];
+  let last = { status: 0, code: "openrouter_no_model_response", message: "OpenRouter returned no usable script." };
+  for (const model of models) {
+    try {
+      const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": new URL(request.url).origin,
+          "X-Title": "AD Maker AI"
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.75,
+          max_tokens: maxTokens
+        })
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const script = j?.choices?.[0]?.message?.content?.trim() || "";
+        if (script) return script;
+        last = { status: 502, code: "openrouter_empty_response", message: `مدل ${model} پاسخ متنی برنگرداند.` };
+        continue;
+      }
+      let detail = null;
+      try { detail = await r.json(); } catch (_) {}
+      const err = detail?.error || {};
+      last = {
+        status: r.status,
+        code: err?.code || err?.type || `http_${r.status}`,
+        message: err?.message || `OpenRouter برای مدل ${model} خطای HTTP ${r.status} برگرداند.`
+      };
+      // Authentication, permission and account-limit errors cannot be fixed by switching models.
+      if ([401, 403, 402].includes(r.status)) break;
+    } catch (e) {
+      last = { status: 503, code: "openrouter_network_error", message: String(e?.message || e) };
+    }
   }
+  throw Object.assign(new Error(last.message), { status: last.status, code: last.code });
 }
 
 async function tts(request, env) {
