@@ -407,61 +407,24 @@ async function analyzeUploadedVideo() {
     const size = Number(video.size || 0);
     if (!size) throw new Error("حجم ویدئو معتبر نیست.");
     const mimeType = String(video.type || "video/mp4");
-    const chunkSize = 8 * 1024 * 1024;
-    setProgress(12, "ایجاد نشست آپلود", "آپلود پایدار ویدئو به‌صورت قطعه‌ای شروع می‌شود…");
-    log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ آپلود قطعه‌ای فعال شد.`);
-
-    const session = await requestJson(`${window.location.origin}/api/analyze-video/upload-start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fileName: video.name || "site-demo.mp4", size, mimeType })
-    }, 45000);
-
-    let uploadUrl = session.uploadUrl;
-    const actualChunkSize = Number(session.chunkSize) || chunkSize;
-    let offset = 0;
-    let chunkIndex = 0;
-    const totalChunks = Math.ceil(size / actualChunkSize);
-
-    while (offset < size) {
-      const end = Math.min(size, offset + actualChunkSize);
-      const chunk = video.slice(offset, end);
-      const isFinal = end >= size;
-      chunkIndex += 1;
-      const percent = 15 + Math.round((end / size) * 35);
-      setProgress(percent, "ارسال ویدئو", `قطعه ${chunkIndex} از ${totalChunks} به Gemini ارسال می‌شود…`);
-      if (chunkIndex === 1) log(`مرحله ۱: ارسال قطعه‌ای و قابل‌اعتماد ویدئو به Gemini؛ اندازه هر قطعه ${(actualChunkSize / 1024 / 1024).toFixed(0)}MB است…`);
-
-      let attempts = 0;
-      while (true) {
-        attempts += 1;
-        try {
-          const uploaded = await requestJson(`${window.location.origin}/api/analyze-video/upload-chunk`, {
-            method: "POST",
-            headers: {
-              "X-Yar-Gemini-Upload-URL": uploadUrl,
-              "X-Yar-Gemini-Offset": String(offset),
-              "X-Yar-Gemini-Finalize": isFinal ? "1" : "0",
-              "Content-Type": mimeType,
-              "Content-Length": String(chunk.size)
-            },
-            body: chunk
-          }, 90000);
-          if (isFinal) {
-            var fileInfo = uploaded;
-            offset = size;
-          } else {
-            const next = Number(uploaded.nextOffset);
-            if (!Number.isFinite(next) || next <= offset) throw new Error("Gemini موقعیت قطعه بعدی را معتبر برنگرداند.");
-            offset = next;
-          }
-          break;
-        } catch (e) {
-          if (attempts >= 3) throw e;
-          log(`قطعه ${chunkIndex} ناموفق بود؛ تلاش دوباره ${attempts + 1}…`, "error");
-          await wait(1200 * attempts);
-        }
-      }
+    // For normal screen recordings (under 95MB), send the video once through the
+    // Pages Worker. This avoids the Gemini resumable-upload chunk handshake
+    // getting stuck behind a proxy on mobile networks. Cloudflare Free allows
+    // request bodies up to 100MB, so leave a small safety margin.
+    if (size <= 95 * 1024 * 1024) {
+      setProgress(15, "ارسال ویدئو", "ویدئو مستقیماً و یک‌باره به Gemini ارسال می‌شود…");
+      log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ حالت آپلود مستقیم فعال شد.`);
+      const form = new FormData();
+      form.append("video", video, video.name || "site-demo.mp4");
+      setProgress(22, "ارسال ویدئو", "در حال ارسال فایل به Gemini…");
+      var fileInfo = await requestJson(`${window.location.origin}/api/analyze-video/upload`, {
+        method: "POST",
+        body: form
+      }, 180000);
+      setProgress(50, "ارسال ویدئو", "آپلود ویدئو به Gemini کامل شد.");
+      log("مرحله ۱: ویدئو کامل به Gemini ارسال و ثبت شد.", "success");
+    } else {
+      throw new Error("این ویدئو بیشتر از 95MB است. برای تحلیل در این نسخه، لطفاً ویدئو را کمی فشرده‌تر کن و دوباره انتخاب کن.");
     }
 
     const fileName = fileInfo?.fileName;
