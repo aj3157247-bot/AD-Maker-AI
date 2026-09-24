@@ -225,10 +225,36 @@ function base64ToBlob(b64, mime) {
   return new Blob([a], { type: mime });
 }
 
-async function api(path, payload) {
-  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-  if (!r.ok) throw new Error(await r.text() || `API ${r.status}`);
-  return r.json();
+async function api(path, payload, timeoutMs = 120000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    const raw = await r.text();
+    if (!r.ok) {
+      let message = raw || `API ${r.status}`;
+      try {
+        const j = JSON.parse(raw);
+        message = j?.detail || j?.message || j?.error || message;
+      } catch (_) {
+        // Cloudflare can return an HTML error page when an upstream request times out.
+        if (/^\s*<!doctype html|^\s*<html/i.test(raw)) message = `سرور ساخت گویندگی پاسخ مناسبی نداد (HTTP ${r.status}).`;
+      }
+      throw new Error(message);
+    }
+    try { return JSON.parse(raw); }
+    catch (_) { throw new Error("پاسخ سرور برای گویندگی قابل خواندن نبود."); }
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("زمان ساخت گویندگی بیش از حد طول کشید؛ دوباره تلاش کن.");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const LIB_DB = "ad-maker-ai-library";
