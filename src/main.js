@@ -456,21 +456,14 @@ async function analyzeUploadedVideo() {
       duration: String(state.duration),
       platform: platformLabel(state.platform)
     };
-    const started = await requestJson(`${window.location.origin}/api/analyze-video/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formStart) }, 45000);
-    const interactionId = started.interactionId;
-    let result = null;
-    let interactionPolls = 0;
-
-    while (!result) {
-      interactionPolls += 1;
-      setProgress(Math.min(94, 60 + Math.min(34, interactionPolls * 2)), "تحلیل محتوای ویدئو", "Gemini در حال بررسی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
-      if (interactionPolls === 1) log("مرحله ۳: تحلیل محتوای واقعی ویدئو در پس‌زمینه اجرا شد.");
-      await wait(4000);
-      const status = await requestJson(`${window.location.origin}/api/analyze-video/interaction-status?id=${encodeURIComponent(interactionId)}`, {}, 45000);
-      if (status.status === "completed") result = status;
-      else if (["failed", "cancelled"].includes(String(status.status).toLowerCase())) throw new Error(status.detail || "تحلیل Gemini ناموفق شد.");
-      if (interactionPolls > 120) throw new Error("تحلیل ویدئو بیش از حد طول کشید؛ لطفاً دوباره تلاش کن.");
+    setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
+    log("مرحله ۳: تحلیل واقعی ویدئو با مسیر پایدار Gemini شروع شد.");
+    const started = await requestJson(`${window.location.origin}/api/analyze-video/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formStart) }, 240000);
+    if (started?.status !== "completed" || !started?.analysis) {
+      throw new Error(started?.detail || "Gemini تحلیل کامل ویدئو را برنگرداند.");
     }
+    setProgress(92, "تحلیل محتوای ویدئو", "تحلیل صحنه‌ها کامل شد؛ در حال آماده‌سازی سناریو…");
+    const result = started.analysis;
 
     state.videoAnalysis = result;
     updateVideoAnalysisUI();
