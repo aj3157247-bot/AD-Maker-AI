@@ -6,6 +6,8 @@ export default {
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
+    if (url.pathname === "/api/analyze-video/upload-start" && request.method === "POST") return uploadAnalysisVideoStart(request, env);
+    if (url.pathname === "/api/analyze-video/upload-chunk" && request.method === "POST") return uploadAnalysisVideoChunk(request, env);
     if (url.pathname === "/api/analyze-video/file-status" && request.method === "GET") return analysisFileStatus(request, env);
     if (url.pathname === "/api/analyze-video/start" && request.method === "POST") return startVideoAnalysis(request, env);
     if (url.pathname === "/api/analyze-video/interaction-status" && request.method === "GET") return analysisInteractionStatus(request, env);
@@ -17,6 +19,69 @@ export default {
 async function requireGemini(env) {
   if (!env.GEMINI_API_KEY) return json({ error: "gemini_missing_api_key", detail: "برای تحلیل مستقیم ویدئو باید Secret با نام GEMINI_API_KEY را در Cloudflare اضافه کنی." }, 503);
   return null;
+}
+
+async function uploadAnalysisVideoStart(request, env) {
+  try {
+    const missing = await requireGemini(env);
+    if (missing) return missing;
+    const b = await request.json();
+    const size = Number(b.size || 0);
+    const mime = String(b.mimeType || "video/mp4");
+    const name = String(b.fileName || `ad-maker-video-${Date.now()}`);
+    if (!Number.isFinite(size) || size <= 0) return json({ error: "empty_video", detail: "حجم ویدئو معتبر نیست." }, 400);
+    if (size > 2 * 1024 * 1024 * 1024) return json({ error: "video_too_large", detail: "حجم این ویدئو بیشتر از حد مجاز Gemini است." }, 413);
+    const start = await fetch("https://generativelanguage.googleapis.com/upload/v1beta/files", {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": env.GEMINI_API_KEY,
+        "X-Goog-Upload-Protocol": "resumable",
+        "X-Goog-Upload-Command": "start",
+        "X-Goog-Upload-Header-Content-Length": String(size),
+        "X-Goog-Upload-Header-Content-Type": mime,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ file: { display_name: name } })
+    });
+    if (!start.ok) return json({ error: "gemini_upload_start_failed", detail: await safeGoogleError(start) }, start.status || 502);
+    const uploadUrl = start.headers.get("x-goog-upload-url");
+    if (!uploadUrl) return json({ error: "gemini_upload_url_missing", detail: "Gemini آدرس نشست آپلود را برنگرداند." }, 502);
+    return json({ ok: true, uploadUrl, size, mimeType: mime, fileName: name, chunkSize: 4 * 1024 * 1024 });
+  } catch (e) {
+    return json({ error: "video_upload_start_exception", detail: String(e?.message || e) }, 500);
+  }
+}
+
+async function uploadAnalysisVideoChunk(request, env) {
+  try {
+    const missing = await requireGemini(env);
+    if (missing) return missing;
+    const uploadUrl = request.headers.get("X-Yar-Gemini-Upload-URL");
+    const offset = Number(request.headers.get("X-Yar-Gemini-Offset") || 0);
+    const finalize = request.headers.get("X-Yar-Gemini-Finalize") === "1";
+    if (!uploadUrl || !/^https:\/\/generativelanguage\.googleapis\.com\//.test(uploadUrl)) return json({ error: "upload_session_required", detail: "نشست آپلود Gemini معتبر نیست." }, 400);
+    if (!Number.isFinite(offset) || offset < 0) return json({ error: "upload_offset_invalid", detail: "موقعیت آپلود معتبر نیست." }, 400);
+    const body = request.body;
+    if (!body) return json({ error: "chunk_required", detail: "قطعه‌ای از ویدئو دریافت نشد." }, 400);
+    const contentLength = request.headers.get("Content-Length");
+    const headers = {
+      "Content-Length": contentLength || "0",
+      "X-Goog-Upload-Offset": String(offset),
+      "X-Goog-Upload-Command": finalize ? "upload, finalize" : "upload"
+    };
+    const upstream = await fetch(uploadUrl, { method: "POST", headers, body });
+    if (!upstream.ok) return json({ error: "gemini_upload_chunk_failed", detail: await safeGoogleError(upstream), upstreamStatus: upstream.status }, upstream.status || 502);
+    if (finalize) {
+      const data = await upstream.json();
+      const info = data?.file;
+      if (!info?.name || !info?.uri) return json({ error: "gemini_file_missing", detail: "Gemini پس از تکمیل آپلود فایل را ثبت نکرد." }, 502);
+      return json({ ok: true, finalized: true, fileName: info.name, fileUri: info.uri, mimeType: info.mimeType || "video/mp4", state: info.state || "PROCESSING" });
+    }
+    const nextOffset = Number(upstream.headers.get("x-goog-upload-offset"));
+    return json({ ok: true, finalized: false, nextOffset: Number.isFinite(nextOffset) ? nextOffset : offset + Number(contentLength || 0) });
+  } catch (e) {
+    return json({ error: "video_upload_chunk_exception", detail: String(e?.message || e) }, 500);
+  }
 }
 
 async function uploadAnalysisVideo(request, env) {
