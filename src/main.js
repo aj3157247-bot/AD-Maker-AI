@@ -103,7 +103,7 @@ function renderShell() {
 
           <div class="field"><label>رنگ برند</label><div class="color-row"><input id="brandColor" type="color" value="#7c5cff"><span id="colorHex">#7C5CFF</span><span class="color-note">در عنوان‌ها و نورپردازی استفاده می‌شود.</span></div></div>
 
-          <div class="field"><label>عکس و ویدئو</label><label class="drop"><input id="files" type="file" accept="image/*,video/*" multiple><div class="upload-icon">↑</div><strong>رسانه‌ها را انتخاب کن</strong><span>چند عکس یا ویدئو همزمان مجاز است</span><small>JPG · PNG · WEBP · MP4 · WebM</small></label><div id="assets" class="asset-list"></div></div>
+          <div class="field"><label>عکس و ویدئو</label><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">↑</div><strong>رسانه‌ها را انتخاب کن</strong><span>چند عکس یا ویدئو همزمان مجاز است</span><small>JPG · PNG · WEBP · HEIC/HEIF · MP4 · MOV · AVI · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div></div>
 
           <div class="field"><label>موسیقی پس‌زمینه <em>اختیاری</em></label><label class="music-drop"><input id="music" type="file" accept="audio/*"><span>🎵</span><div><strong>افزودن موسیقی</strong><small id="musicName">هنوز موسیقی انتخاب نشده</small></div></label></div>
 
@@ -217,7 +217,11 @@ function assetPreview() {
   });
 }
 
-$("#files").onchange = e => { state.assets = [...e.target.files]; assetPreview(); log(`${state.assets.length} فایل برای پروژه انتخاب شد.`); };
+$("#files").onchange = e => {
+  state.assets = [...e.target.files];
+  assetPreview();
+  log(`${state.assets.length} فایل انتخاب شد؛ فرمت هر فایل هنگام ساخت به‌صورت خودکار بررسی و در صورت نیاز تبدیل می‌شود.`, "success");
+};
 $("#music").onchange = e => { const f = e.target.files[0]; $("#musicName").textContent = f ? f.name : "هنوز موسیقی انتخاب نشده"; $("#musicState").textContent = f ? "افزوده شد" : "اختیاری"; };
 $("#lang").onchange = e => { state.language = e.target.value; setDir(); $("#brand").placeholder = t("brandPlaceholder"); $("#desc").placeholder = t("descPlaceholder"); };
 $("#duration").onchange = e => state.duration = +e.target.value;
@@ -368,39 +372,27 @@ async function renderVideo(voiceBlob) {
   if (!window.MediaRecorder) throw new Error("مرورگر فعلی ساخت ویدئو را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
   if (!canvas.captureStream) throw new Error("مرورگر فعلی ضبط Canvas را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
 
-  // Load media without trusting File.type. Some Android gallery/file providers return
-  // an empty or incorrect MIME type even for a valid JPG/PNG. We first try the
-  // browser image decoder, then the video decoder for unknown files.
+  // Normalize every selected asset to something the browser renderer can decode.
+  // Native browser decoding is used first; HEIC/HEIF images and unsupported videos
+  // are converted locally in the browser only when needed.
   const media = [];
   const urls = [];
   for (const f of state.assets) {
     const objectUrl = URL.createObjectURL(f);
     urls.push(objectUrl);
-    const kind = await detectMediaKind(f, objectUrl);
-
-    if (kind === "image") {
-      const im = await loadImageFile(f, objectUrl);
-      if (im) {
-        media.push({ type: "image", el: im, name: f.name, duration: 1 });
-      } else {
-        media.push({ type: "fallback", el: null, name: f.name, duration: 1 });
-        log(`تصویر «${f.name}» توسط Chrome قابل رمزگشایی نبود؛ این صحنه با کارت تبلیغاتی جایگزین شد.`, "error");
-      }
+    const prepared = await prepareMediaFile(f, objectUrl);
+    if (prepared.kind === "image") {
+      media.push({ type: "image", el: prepared.element, name: f.name, duration: 1 });
+      log(`تصویر «${f.name}» آماده شد.`, "success");
       continue;
     }
-
-    if (kind === "video") {
-      const v = document.createElement("video");
-      v.src = objectUrl;
-      v.muted = true;
-      v.playsInline = true;
-      v.preload = "auto";
-      await waitForVideo(v, f.name);
+    if (prepared.kind === "video") {
+      const v = prepared.element;
       media.push({ type: "video", el: v, name: f.name, duration: Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 1 });
+      log(`ویدئوی «${f.name}» آماده شد${prepared.converted ? " (تبدیل خودکار)" : ""}.`, "success");
       continue;
     }
-
-    throw new Error(`فایل «${f.name}» یک تصویر یا ویدئوی قابل‌خواندن نیست. لطفاً JPG/PNG یا MP4 را انتخاب کن.`);
+    throw new Error(`فرمت «${f.name}» در این مرورگر قابل پردازش نیست. فایل را به JPG/PNG یا MP4 تبدیل کن.`);
   }
 
   let audioCtx = null, dest = null, voiceSource = null, musicSource = null;
@@ -429,9 +421,10 @@ async function renderVideo(voiceBlob) {
       if (music) {
         let buf;
         try {
-          buf = await audioCtx.decodeAudioData(await music.arrayBuffer());
+          const normalizedMusic = await prepareAudioFile(music);
+          buf = await audioCtx.decodeAudioData(await normalizedMusic.arrayBuffer());
         } catch (_) {
-          throw new Error("فایل موسیقی قابل خواندن نیست. MP3 یا WAV را امتحان کن.");
+          throw new Error("فایل موسیقی قابل خواندن یا تبدیل نیست. MP3/WAV/M4A را امتحان کن.");
         }
         musicSource = audioCtx.createBufferSource();
         musicSource.buffer = buf;
@@ -596,7 +589,158 @@ async function renderVideo(voiceBlob) {
     try { await audioCtx?.close(); } catch (_) {}
     media.filter(x => x.type === "video").forEach(x => { try { x.el.pause(); } catch (_) {} });
     urls.forEach(u => URL.revokeObjectURL(u));
+    for (const u of urlsForPreparedAssets) { try { URL.revokeObjectURL(u); } catch (_) {} }
+    urlsForPreparedAssets.clear();
   }
+}
+
+
+let ffmpegPromise = null;
+
+async function loadHeicDecoder() {
+  if (window.HeicTo) return window.HeicTo;
+  if (window.__adMakerHeicPromise) return window.__adMakerHeicPromise;
+  window.__adMakerHeicPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/heic-to@1.5.2/dist/iife/heic-to.js";
+    script.async = true;
+    script.onload = () => window.HeicTo ? resolve(window.HeicTo) : reject(new Error("HEIC decoder loaded but is unavailable."));
+    script.onerror = () => reject(new Error("دانلود مبدل HEIC ناموفق بود."));
+    document.head.appendChild(script);
+  });
+  return window.__adMakerHeicPromise;
+}
+
+async function convertHeic(file) {
+  const HeicTo = await loadHeicDecoder();
+  if (!await HeicTo.isHeic(file)) throw new Error("این فایل HEIC/HEIF نیست.");
+  const blob = await HeicTo({ blob: file, type: "image/jpeg", quality: 0.92 });
+  const img = new Image();
+  img.decoding = "async";
+  img.src = URL.createObjectURL(blob);
+  await waitForImage(img, file.name || "HEIC");
+  return { element: img, blob };
+}
+
+async function loadFfmpeg() {
+  if (ffmpegPromise) return ffmpegPromise;
+  ffmpegPromise = (async () => {
+    log("فرمت این ویدئو برای Chrome مستقیم قابل پخش نبود؛ مبدل ویدئو در حال آماده‌سازی است...", "info");
+    const ffmpegModule = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js");
+    const utilModule = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js");
+    const { FFmpeg } = ffmpegModule;
+    const { toBlobURL } = utilModule;
+    const ffmpeg = new FFmpeg();
+    const base = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
+      wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, "application/wasm"),
+      workerURL: await toBlobURL(`${base}/ffmpeg-core.worker.js`, "text/javascript")
+    });
+    return ffmpeg;
+  })().catch(e => {
+    ffmpegPromise = null;
+    throw e;
+  });
+  return ffmpegPromise;
+}
+
+function safeExt(name, fallback = "bin") {
+  const m = String(name || "").toLowerCase().match(/\.([a-z0-9]{2,8})(?:$|\?)/);
+  return m ? m[1] : fallback;
+}
+
+async function ffmpegConvert(file, outputExt, args) {
+  const ffmpeg = await loadFfmpeg();
+  const input = `input-${Date.now()}-${Math.random().toString(16).slice(2)}.${safeExt(file.name, "bin")}`;
+  const output = `output-${Date.now()}-${Math.random().toString(16).slice(2)}.${outputExt}`;
+  try {
+    await ffmpeg.writeFile(input, new Uint8Array(await file.arrayBuffer()));
+    await ffmpeg.exec(["-y", "-i", input, ...args, output]);
+    const data = await ffmpeg.readFile(output);
+    if (!data || !data.length) throw new Error("FFmpeg produced an empty file.");
+    return new Blob([data], { type: outputExt === "mp4" ? "video/mp4" : "audio/wav" });
+  } finally {
+    try { await ffmpeg.deleteFile(input); } catch (_) {}
+    try { await ffmpeg.deleteFile(output); } catch (_) {}
+  }
+}
+
+async function prepareMediaFile(file, objectUrl) {
+  const sniffed = await sniffMediaType(file);
+  const declared = String(file?.type || "").toLowerCase();
+  const ext = safeExt(file.name, "");
+
+  if (sniffed === "image" || declared.startsWith("image/")) {
+    const image = await loadImageFile(file, objectUrl);
+    if (image) return { kind: "image", element: image, converted: false };
+    if (/^(heic|heif|heics|heifs)$/i.test(ext) || await looksLikeHeic(file)) {
+      const converted = await convertHeic(file);
+      return { kind: "image", element: converted.element, converted: true };
+    }
+  }
+
+  if (/^(heic|heif|heics|heifs)$/i.test(ext) || await looksLikeHeic(file)) {
+    const converted = await convertHeic(file);
+    return { kind: "image", element: converted.element, converted: true };
+  }
+
+  if (sniffed === "video" || declared.startsWith("video/")) {
+    try {
+      const v = document.createElement("video");
+      v.src = objectUrl; v.muted = true; v.playsInline = true; v.preload = "auto";
+      await waitForVideo(v, file.name);
+      return { kind: "video", element: v, converted: false };
+    } catch (_) {}
+  }
+
+  // Try native browser decoders before invoking the heavyweight WASM converter.
+  try {
+    const v = document.createElement("video");
+    v.src = objectUrl; v.muted = true; v.playsInline = true; v.preload = "metadata";
+    await waitForVideo(v, file.name, true);
+    return { kind: "video", element: v, converted: false };
+  } catch (_) {}
+
+  // Unsupported video container/codec: normalize to H.264/AAC MP4 in-browser.
+  const convertedBlob = await ffmpegConvert(file, "mp4", [
+    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"
+  ]);
+  const url = URL.createObjectURL(convertedBlob);
+  urlsForPreparedAssets.add(url);
+  const v = document.createElement("video");
+  v.src = url; v.muted = true; v.playsInline = true; v.preload = "auto";
+  await waitForVideo(v, file.name);
+  return { kind: "video", element: v, converted: true };
+}
+
+const urlsForPreparedAssets = new Set();
+
+async function prepareAudioFile(file) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return file;
+  const ctx = new AC();
+  try {
+    try {
+      await ctx.decodeAudioData(await file.arrayBuffer());
+      return file;
+    } catch (_) {}
+  } finally {
+    try { await ctx.close(); } catch (_) {}
+  }
+  const wav = await ffmpegConvert(file, "wav", ["-vn", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le"]);
+  return wav;
+}
+
+async function looksLikeHeic(file) {
+  try {
+    const head = new Uint8Array(await file.slice(0, 32).arrayBuffer());
+    if (head.length < 12) return false;
+    if (head[4] !== 0x66 || head[5] !== 0x74 || head[6] !== 0x79 || head[7] !== 0x70) return false;
+    const brand = String.fromCharCode(...head.slice(8, 12)).toLowerCase();
+    return /^(heic|heix|hevc|hevx|heif|mif1|msf1)$/.test(brand);
+  } catch (_) { return false; }
 }
 
 async function detectMediaKind(file, objectUrl) {
@@ -639,7 +783,7 @@ async function sniffMediaType(file) {
     if (head.length >= 12 && head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46 && head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50) return "image"; // WEBP
     if (head.length >= 12 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) {
       const brand = String.fromCharCode(...head.slice(8, 12));
-      if (/^(avif|avis|heic|heix|hevc|mif1|msf1)$/i.test(brand)) return "image";
+      if (/^(avif|avis|heic|heif|heix|hevc|hevx|mif1|msf1)$/i.test(brand)) return "image";
       if (/^(isom|iso2|mp41|mp42|3gp|3g2|M4V)$/i.test(brand)) return "video";
     }
     if (head.length >= 12 && head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) return "video"; // WebM/Matroska
@@ -759,7 +903,7 @@ function fileToDataUrl(file) {
 
 function friendlyRenderError(error) {
   const raw = error?.message ? String(error.message) : String(error || "");
-  if (!raw || raw === "[object Event]") return "یکی از فایل‌های رسانه‌ای خوانده نشد. یک MP4 یا JPG/PNG دیگر امتحان کن.";
+  if (!raw || raw === "[object Event]") return "یکی از فایل‌ها قابل رمزگشایی یا تبدیل نبود. برنامه JPG/PNG/WEBP/HEIC و ویدئوهای رایج را پشتیبانی می‌کند؛ برای فرمت ناشناخته دوباره تلاش کن.";
   if (/decodeAudioData|EncodingError|DataCloneError/i.test(raw)) return "فایل صوتی قابل خواندن نیست. موسیقی را به MP3 یا WAV تبدیل کن و دوباره امتحان کن.";
   if (/MediaRecorder|captureStream/i.test(raw)) return "مرورگر نتوانست ویدئو را ضبط کند. آخرین نسخه Chrome را امتحان کن.";
   return raw;
