@@ -198,8 +198,10 @@ For the script: narrate the actual sequence of the video so the voice matches wh
     // Interactions API for the processing field and recommend background
     // execution for long/complex video analysis. Use only current Gemini 3.x
     // models here; never use Gemini 2.5 fallbacks.
-    const agenticModels = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"];
-    const staticModels = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"];
+    // Prefer models that may still have daily quota available. Do not burn the
+    // remaining quota by retrying a daily-quota 429 on the same model.
+    const agenticModels = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"];
+    const staticModels = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"];
     // Use the exact URI returned by Gemini Files API. Never manufacture or
     // rewrite a URI here: blob:// URIs are browser-internal and are rejected by
     // Interactions API. Small videos bypass this endpoint entirely via the inline
@@ -285,6 +287,11 @@ For the script: narrate the actual sequence of the video so the voice matches wh
           } else if (response) {
             lastStatus = response.status || 502;
             lastError = await safeGoogleError(response);
+            // Daily quota is a project/model limit. Retrying the same request
+            // only wastes time and can consume more quota, so immediately move
+            // to another current Gemini model when Google reports quota exhaustion.
+            const dailyQuota = lastStatus === 429 && /per day|daily|requests per day|GenerateRequestsPerDay|quota.*day|quotaValue/i.test(lastError);
+            if (dailyQuota) break;
             // Capability/model errors should move immediately to the next model.
             if (/not found|not available|unsupported|does not support|not enabled/i.test(lastError)) break;
             if (!retryable.has(lastStatus)) break;
@@ -300,10 +307,11 @@ For the script: narrate the actual sequence of the video so the voice matches wh
     if (!created) created = await tryCreate(staticModels, "static");
 
     if (!created) {
+      const dailyQuota = lastStatus === 429 && /per day|daily|requests per day|GenerateRequestsPerDay|quota.*day|quotaValue/i.test(lastError);
       const busy = [429, 503].includes(lastStatus) || /high demand|rate limit|resource exhausted|unavailable/i.test(lastError);
       return json({
-        error: busy ? "gemini_capacity_busy" : "gemini_analysis_failed",
-        detail: busy ? "سرویس Gemini در حال حاضر ظرفیت کافی ندارد. چند مدل جدید Gemini 3.x امتحان شد؛ لطفاً چند دقیقه بعد دوباره تلاش کن." : lastError,
+        error: dailyQuota ? "gemini_daily_quota_exhausted" : (busy ? "gemini_capacity_busy" : "gemini_analysis_failed"),
+        detail: dailyQuota ? "سهمیه روزانه Gemini برای این پروژه تمام شده است. این محدودیت از طرف Google است و با کد سایت قابل حذف نیست. چند مدل فعلی امتحان شدند؛ بعد از reset سهمیه یا ارتقای پروژه دوباره می‌توانی تحلیل کنی." : (busy ? "سرویس Gemini در حال حاضر ظرفیت کافی ندارد. چند مدل جدید Gemini 3.x امتحان شد؛ لطفاً چند دقیقه بعد دوباره تلاش کن." : lastError),
         attemptedModels
       }, busy ? 503 : (lastStatus || 502));
     }
@@ -361,24 +369,54 @@ async function startVideoAnalysisInline(request, env) {
     const targetWords = Math.max(35, Math.min(900, Math.round(duration * 2.2)));
     const prompt = `Analyze this product/site demonstration video for AD Maker AI. Inspect the actual frames and visible UI text. Do not invent anything not shown or stated. Brand: ${brand || "Unknown"}. User description: ${description || "None provided"}. Platform: ${platform}. Output language: ${langName}. Target advertisement duration: ${duration} seconds. Target voice-over length: about ${targetWords} words. Return ONLY JSON with summary, facts, scenes[{start,end,title,description}], and script. The script must narrate the actual sequence in order and end with a call to action. Never invent prices, discounts, statistics, ratings, guarantees, locations, users, or features.`;
     const data = bytesToBase64(await file.arrayBuffer());
-    const body = {
-      model: "gemini-3.8-flash",
-      background: true,
-      input: [
-        { type: "video", data, mime_type: mime, processing: "static" },
-        { type: "text", text: prompt }
-      ],
-      generation_config: { max_output_tokens: 5000, thinking_level: "low" }
-    };
-    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
-      method: "POST",
-      headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json", "Api-Revision": "2026-05-20" },
-      body: JSON.stringify(body)
-    });
-    if (!response.ok) return json({ error: "gemini_inline_analysis_failed", detail: await safeGoogleError(response) }, response.status || 502);
-    const interaction = await response.json();
-    if (!interaction?.id) return json({ error: "gemini_interaction_id_missing", detail: "Gemini عملیات مستقیم را ایجاد کرد اما شناسه برنگشت." }, 502);
-    return json({ ok: true, status: String(interaction.status || "in_progress").toLowerCase(), interactionId: interaction.id, id: interaction.id, model: interaction.model || "gemini-3.8-flash", processingMode: "static-inline" });
+    // Inline analysis also uses model failover. This matters on the Free tier:
+    // one model can have exhausted its daily quota while another current model
+    // still has capacity. Never retry a daily-quota 429 on the same model.
+    const inlineModels = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"];
+    const attemptedModels = [];
+    let lastStatus = 503;
+    let lastError = "";
+    for (const model of inlineModels) {
+      attemptedModels.push(model);
+      const body = {
+        model,
+        background: true,
+        input: [
+          { type: "video", data, mime_type: mime, processing: "static" },
+          { type: "text", text: prompt }
+        ],
+        generation_config: { max_output_tokens: 5000, thinking_level: "low" }
+      };
+      let response;
+      try {
+        response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+          method: "POST",
+          headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json", "Api-Revision": "2026-05-20" },
+          body: JSON.stringify(body)
+        });
+      } catch (e) {
+        lastStatus = 502;
+        lastError = String(e?.message || e);
+        continue;
+      }
+      if (response.ok) {
+        const interaction = await response.json();
+        if (!interaction?.id) return json({ error: "gemini_interaction_id_missing", detail: "Gemini عملیات مستقیم را ایجاد کرد اما شناسه برنگشت." }, 502);
+        return json({ ok: true, status: String(interaction.status || "in_progress").toLowerCase(), interactionId: interaction.id, id: interaction.id, model: interaction.model || model, processingMode: "static-inline" });
+      }
+      lastStatus = response.status || 502;
+      lastError = await safeGoogleError(response);
+      const dailyQuota = lastStatus === 429 && /per day|daily|requests per day|GenerateRequestsPerDay|quota.*day|quotaValue/i.test(lastError);
+      if (dailyQuota || /not found|not available|unsupported|does not support|not enabled/i.test(lastError)) continue;
+      if (![408, 429, 500, 502, 503, 504].includes(lastStatus)) break;
+      if (lastStatus === 429 || lastStatus === 503) await sleep(1200);
+    }
+    const quota = lastStatus === 429 && /per day|daily|requests per day|GenerateRequestsPerDay|quota.*day|quotaValue/i.test(lastError);
+    return json({
+      error: quota ? "gemini_daily_quota_exhausted" : "gemini_inline_analysis_failed",
+      detail: quota ? "سهمیه روزانه Gemini برای مدل‌های در دسترس این پروژه تمام شده است. سهمیه در زمان تعیین‌شده توسط Google دوباره فعال می‌شود یا می‌توانی پروژه را به Billing متصل کنی." : lastError,
+      attemptedModels
+    }, lastStatus || 502);
   } catch (e) {
     return json({ error: "video_analysis_inline_exception", detail: String(e?.message || e) }, 500);
   }
