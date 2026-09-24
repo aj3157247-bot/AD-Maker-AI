@@ -16,7 +16,9 @@ const state = {
   brandColor: "#7c5cff",
   currentStage: 0,
   generated: false,
-  voiceMode: "none"
+  voiceMode: "none",
+  videoAnalysis: null,
+  videoAnalysisBusy: false
 };
 
 const $ = (s) => document.querySelector(s);
@@ -125,7 +127,7 @@ function renderShell() {
             <button type="button" class="style-chip" data-style="whatsapp"><i>◌</i><span>WhatsApp</span></button>
           </div></div>
 
-          <div class="field media-field"><div class="field-title"><label>رسانه‌های تبلیغ</label><span>هر تعداد</span></div><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>برای بهترین نتیجه، همه تصاویر و کلیپ‌های محصولت را انتخاب کن.</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div></div>
+          <div class="field media-field"><div class="field-title"><label>رسانه‌های تبلیغ</label><span>هر تعداد</span></div><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>برای بهترین نتیجه، همه تصاویر و کلیپ‌های محصولت را انتخاب کن.</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div><div id="videoAnalysisBox" class="video-analysis-box" hidden><div><strong>🎬 تحلیل هوشمند ویدئو</strong><small id="videoAnalysisStatus">ویدئوی معرفی سایت را تحلیل می‌کند و سناریو را دقیقاً بر اساس بخش‌های دیده‌شده می‌سازد.</small></div><button id="videoAnalysisBtn" class="secondary" type="button">تحلیل ویدئو</button></div></div>
 
           <div class="compact-options">
             <label class="music-drop"><input id="music" type="file" accept="audio/*"><span>♫</span><div><strong>موسیقی پس‌زمینه</strong><small id="musicName">اختیاری</small></div></label>
@@ -353,6 +355,83 @@ function languageLabel(code) { return ({en:"English",ar:"العربية",tr:"Tü
 function platformLabel(code) { return ({youtube_short:"YouTube Shorts",youtube:"YouTube",tiktok:"TikTok",instagram_reels:"Instagram Reels",facebook:"Facebook",instagram:"Instagram",linkedin:"LinkedIn",whatsapp:"WhatsApp"})[code] || "تبلیغ"; }
 function outputRatio(code) { return ({youtube:"16:9",instagram:"1:1",facebook:"4:5",linkedin:"1:1",youtube_short:"9:16",tiktok:"9:16",instagram_reels:"9:16",whatsapp:"9:16"})[code] || "9:16"; }
 
+function isVideoFile(file) {
+  const type = String(file?.type || "").toLowerCase();
+  if (type.startsWith("video/")) return true;
+  return /\.(mp4|mov|m4v|avi|mkv|webm|wmv|flv|mpg|mpeg|3gp)$/i.test(String(file?.name || ""));
+}
+
+function updateVideoAnalysisUI() {
+  const box = $("#videoAnalysisBox");
+  const btn = $("#videoAnalysisBtn");
+  const status = $("#videoAnalysisStatus");
+  if (!box || !btn || !status) return;
+  const hasVideo = state.assets.some(isVideoFile);
+  box.hidden = !hasVideo;
+  btn.disabled = state.videoAnalysisBusy || !hasVideo;
+  btn.textContent = state.videoAnalysisBusy ? "در حال تحلیل…" : state.videoAnalysis ? "تحلیل دوباره" : "تحلیل ویدئو";
+  if (state.videoAnalysis) {
+    const scenes = Array.isArray(state.videoAnalysis.scenes) ? state.videoAnalysis.scenes.length : 0;
+    status.textContent = `تحلیل آماده است؛ ${scenes || "بخش‌های ویدئو"} ویدئو شناسایی شد و سناریو بر اساس محتوای واقعی ساخته می‌شود.`;
+  } else {
+    status.textContent = "ویدئوی معرفی سایت را تحلیل می‌کند و سناریو را دقیقاً بر اساس بخش‌های دیده‌شده می‌سازد.";
+  }
+}
+
+async function analyzeUploadedVideo() {
+  const video = state.assets.find(isVideoFile);
+  if (!video || state.videoAnalysisBusy) return null;
+  state.videoAnalysisBusy = true;
+  updateVideoAnalysisUI();
+  setStage(0);
+  setProgress(15, "تحلیل ویدئو", "در حال بررسی صفحه‌ها، قابلیت‌ها و زمان‌بندی ویدئو…");
+  log("تحلیل هوشمند ویدئوی معرفی شروع شد.", "info");
+  const form = new FormData();
+  form.append("video", video, video.name || "site-demo.mp4");
+  form.append("brand", $("#brand")?.value.trim() || "");
+  form.append("description", $("#desc")?.value.trim() || "");
+  form.append("language", state.language);
+  form.append("duration", String(state.duration));
+  form.append("platform", platformLabel(state.platform));
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 240000);
+    let response;
+    try {
+      response = await fetch(`${window.location.origin}/api/analyze-video`, { method: "POST", body: form, cache: "no-store", signal: controller.signal });
+    } finally { clearTimeout(timer); }
+    const raw = await response.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch (_) {}
+    if (!response.ok) throw new Error(data.detail || data.message || data.error || `تحلیل ویدئو ناموفق بود (HTTP ${response.status}).`);
+    state.videoAnalysis = data;
+    updateVideoAnalysisUI();
+    if (data.script) {
+      state.script = data.script.trim();
+      $("#scriptEditor").value = state.script;
+      $("#scriptEditor").disabled = false;
+      $("#editScript").disabled = false;
+      updateScriptMeta(state.script, "تحلیل ویدئو");
+    }
+    const scenes = Array.isArray(data.scenes) ? data.scenes : [];
+    if (scenes.length) {
+      log(`ویدئو تحلیل شد: ${scenes.length} بخش/قاب مهم شناسایی شد.`, "success");
+      scenes.slice(0, 8).forEach((scene, i) => log(`${String(i + 1).padStart(2, "0")} · ${scene.start || ""}${scene.end ? `–${scene.end}` : ""} · ${scene.title || scene.description || "بخش ویدئو"}`));
+    } else log("ویدئو تحلیل شد و سناریوی مبتنی بر محتوای واقعی آماده است.", "success");
+    setProgress(42, "سناریو آماده", "سناریو بر اساس بخش‌های واقعی ویدئو آماده شد.");
+    return data;
+  } catch (e) {
+    const detail = e?.name === "AbortError" ? "تحلیل ویدئو بیش از حد طول کشید؛ یک ویدئوی کوتاه‌تر امتحان کن." : String(e?.message || e);
+    state.videoAnalysis = null;
+    updateVideoAnalysisUI();
+    log(`تحلیل ویدئو انجام نشد: ${detail}`, "error");
+    throw new Error(detail);
+  } finally {
+    state.videoAnalysisBusy = false;
+    updateVideoAnalysisUI();
+  }
+}
+
 function fallbackScript(brand, desc) {
   if ((state.scriptMode === "manual" || state.scriptMode === "hybrid") && state.customScript) return state.customScript;
   if (state.language === "en") return `${brand}. ${desc}. Discover a simpler way to get what you need. Try ${brand} today and take the next step.`;
@@ -376,9 +455,16 @@ function assetPreview() {
 
 $("#files").onchange = e => {
   state.assets = [...e.target.files];
+  state.videoAnalysis = null;
   assetPreview();
-renderVideoLibrary();
+  renderVideoLibrary();
+  updateVideoAnalysisUI();
   log(`${state.assets.length} فایل انتخاب شد؛ فرمت هر فایل هنگام ساخت به‌صورت خودکار بررسی و در صورت نیاز تبدیل می‌شود.`, "success");
+};
+
+$("#videoAnalysisBtn").onclick = async () => {
+  if (state.busy) return;
+  try { await analyzeUploadedVideo(); } catch (_) {}
 };
 $("#music").onchange = e => { const f = e.target.files[0]; $("#musicName").textContent = f ? f.name : "اختیاری"; };
 $("#lang").onchange = e => { state.language = e.target.value; setDir(); $("#brand").placeholder = t("brandPlaceholder"); $("#desc").placeholder = t("descPlaceholder"); };
@@ -456,6 +542,7 @@ function bindChoiceControls() {
 
 bindChoiceControls();
 updatePlatformUI();
+updateVideoAnalysisUI();
 
 $("#demoBtn").onclick = () => {
   $("#brand").value = "بازارک";
@@ -483,13 +570,18 @@ $("#scriptBtn").onclick = async () => {
     setStage(0); setProgress(10, "تحلیل پروژه", t("analyze")); log(`شروع پروژه «${brand}» با ${state.assets.length} رسانه.`); await wait(250);
     if (state.assets.length) log(t("mediaReady"), "success"); else log(t("noMedia"));
 
+    let videoAnalysis = state.videoAnalysis;
+    if (state.assets.some(isVideoFile) && state.scriptMode !== "manual" && !videoAnalysis) {
+      try { videoAnalysis = await analyzeUploadedVideo(); }
+      catch (_) { log("تحلیل ویدئو در دسترس نبود؛ سناریو با اطلاعات متنی ادامه پیدا می‌کند.", "info"); }
+    }
     setStage(1); setProgress(25, "آماده‌سازی سناریو", state.scriptMode === "manual" ? "سناریوی اختصاصی تو آماده می‌شود." : state.scriptMode === "hybrid" ? "AI سناریوی تو را حرفه‌ای‌تر و منسجم‌تر می‌کند." : t("script"));
     let j;
     if (state.scriptMode === "manual") {
       j = { script: customScript, fallback: false, provider: "user" };
       log("سناریوی اختصاصی کاربر انتخاب شد.", "success");
     } else try {
-      j = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords: targetWordsForDuration(state.duration) });
+      j = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords: targetWordsForDuration(state.duration), videoAnalysis: videoAnalysis ? { summary: videoAnalysis.summary || "", scenes: videoAnalysis.scenes || [], facts: videoAnalysis.facts || [], recommendedScript: videoAnalysis.script || "" } : null });
       if (j.fallback) {
         const reason = j.detail || j.error || "خطای نامشخص";
         log(`API سناریو پاسخ کامل نداد؛ حالت داخلی فعال شد. علت: ${reason}`, "error");
@@ -714,7 +806,7 @@ $("#downloadBtn").onclick = () => {
 };
 
 $("#rerenderBtn").onclick = () => $("#renderBtn").click();
-$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.activeView = "preview"; state.voiceBlob = null; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".scenario-mode").forEach(x => x.classList.toggle("active", x.dataset.scriptMode === "ai")); $("#scriptBtn").textContent = "✦ ساخت سناریوی هوشمند"; $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
+$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".scenario-mode").forEach(x => x.classList.toggle("active", x.dataset.scriptMode === "ai")); $("#scriptBtn").textContent = "✦ ساخت سناریوی هوشمند"; $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
 $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line muted"><span>●</span> منتظر عملیات بعدی...</div>`; };
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
 $("#scriptMore").onclick = () => { const box = $("#scriptEditor"); const details = $(".script-details"); details.open = true; box.classList.toggle("expanded"); $("#scriptMore").textContent = box.classList.contains("expanded") ? "کمتر" : "بیشتر"; if (box.classList.contains("expanded")) { box.style.height = "auto"; box.style.height = `${Math.max(180, box.scrollHeight)}px`; } else box.style.height = "82px"; };
@@ -856,28 +948,12 @@ async function renderVideo(voiceBlob) {
         }
         const ew = el.videoWidth || el.naturalWidth || W;
         const eh = el.videoHeight || el.naturalHeight || H;
-
-        // Keep the entire source visible. The previous `cover` scaling could crop
-        // a large portion of vertical/horizontal media (especially phone videos).
-        // Fill the canvas with a soft backdrop first, then fit the complete media
-        // inside the output frame without cutting its edges.
         const cover = Math.max(W / ew, H / eh);
-        const bgW = ew * cover, bgH = eh * cover;
-        ctx.save();
-        ctx.globalAlpha = 0.34;
-        ctx.filter = "blur(24px) brightness(.55) saturate(1.08)";
-        ctx.drawImage(el, (W - bgW) / 2, (H - bgH) / 2, bgW, bgH);
-        ctx.restore();
-
-        const fit = Math.min(W / ew, H / eh);
-        const zoom = 0.96 + 0.025 * sceneP;
-        const iw = ew * fit * zoom, ih = eh * fit * zoom;
-        const drift = Math.sin(sceneP * Math.PI) * Math.min(8, W * 0.01);
-        const ix = (W - iw) / 2 + drift;
-        const iy = (H - ih) / 2;
+        const zoom = 1.04 + 0.055 * sceneP;
+        const iw = ew * cover * zoom, ih = eh * cover * zoom;
+        const drift = Math.sin(sceneP * Math.PI) * 12;
         ctx.globalAlpha = 1;
-        ctx.filter = "none";
-        ctx.drawImage(el, ix, iy, iw, ih);
+        ctx.drawImage(el, (W - iw) / 2 + drift, (H - ih) / 2, iw, ih);
       } else {
         const g = ctx.createLinearGradient(0, 0, W, H);
         g.addColorStop(0, state.brandColor); g.addColorStop(1, "#090912");
