@@ -387,9 +387,9 @@ async function analyzeUploadedVideo() {
   setProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود…");
   log("تحلیل هوشمند ویدئوی معرفی شروع شد.", "info");
 
-  const requestJson = async (url, options = {}) => {
+  const requestJson = async (url, options = {}, timeoutMs = 45000) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 45000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, { ...options, cache: "no-store", signal: controller.signal });
       const raw = await response.text();
@@ -398,56 +398,111 @@ async function analyzeUploadedVideo() {
       if (!response.ok) throw new Error(data.detail || data.message || data.error || `خطای سرور (HTTP ${response.status}).`);
       return data;
     } catch (e) {
-      if (e?.name === "AbortError") throw new Error("ارتباط با سرور بیش از حد طول کشید؛ دوباره تلاش کن.");
+      if (e?.name === "AbortError") throw new Error("ارتباط با سرور بیش از حد طول کشید؛ این قطعه دوباره ارسال می‌شود.");
       throw e;
     } finally { clearTimeout(timer); }
   };
 
   try {
-    const form = new FormData();
-    form.append("video", video, video.name || "site-demo.mp4");
-    setProgress(15, "ارسال ویدئو", "ویدئو به Gemini ارسال می‌شود؛ صفحه را نبند.");
-    log("مرحله ۱ از ۳: ارسال فایل به Gemini…");
-    const uploaded = await requestJson(`${window.location.origin}/api/analyze-video/upload`, { method: "POST", body: form });
-    const fileName = uploaded.fileName;
-    let fileInfo = uploaded;
-    let polls = 0;
+    const size = Number(video.size || 0);
+    if (!size) throw new Error("حجم ویدئو معتبر نیست.");
+    const mimeType = String(video.type || "video/mp4");
+    const chunkSize = 4 * 1024 * 1024;
+    setProgress(12, "ایجاد نشست آپلود", "آپلود ویدئو به‌صورت قطعه‌ای شروع می‌شود…");
+    log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ آپلود قطعه‌ای فعال شد.`);
 
-    while (String(fileInfo.state || "PROCESSING").toUpperCase() !== "ACTIVE") {
-      const stateName = String(fileInfo.state || "PROCESSING").toUpperCase();
-      if (stateName === "FAILED") throw new Error(fileInfo.detail || "Gemini نتوانست فایل ویدئو را پردازش کند.");
+    const session = await requestJson(`${window.location.origin}/api/analyze-video/upload-start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileName: video.name || "site-demo.mp4", size, mimeType })
+    }, 45000);
+
+    let uploadUrl = session.uploadUrl;
+    let offset = 0;
+    let chunkIndex = 0;
+    const totalChunks = Math.ceil(size / chunkSize);
+
+    while (offset < size) {
+      const end = Math.min(size, offset + chunkSize);
+      const chunk = video.slice(offset, end);
+      const isFinal = end >= size;
+      chunkIndex += 1;
+      const percent = 15 + Math.round((end / size) * 35);
+      setProgress(percent, "ارسال ویدئو", `قطعه ${chunkIndex} از ${totalChunks} به Gemini ارسال می‌شود…`);
+      if (chunkIndex === 1) log("مرحله ۱: ارسال قطعه‌ای و قابل‌اعتماد ویدئو به Gemini…");
+
+      let attempts = 0;
+      while (true) {
+        attempts += 1;
+        try {
+          const uploaded = await requestJson(`${window.location.origin}/api/analyze-video/upload-chunk`, {
+            method: "POST",
+            headers: {
+              "X-Yar-Gemini-Upload-URL": uploadUrl,
+              "X-Yar-Gemini-Offset": String(offset),
+              "X-Yar-Gemini-Finalize": isFinal ? "1" : "0",
+              "Content-Type": mimeType,
+              "Content-Length": String(chunk.size)
+            },
+            body: chunk
+          }, 60000);
+          if (isFinal) {
+            var fileInfo = uploaded;
+            offset = size;
+          } else {
+            const next = Number(uploaded.nextOffset);
+            if (!Number.isFinite(next) || next <= offset) throw new Error("Gemini موقعیت قطعه بعدی را معتبر برنگرداند.");
+            offset = next;
+          }
+          break;
+        } catch (e) {
+          if (attempts >= 3) throw e;
+          log(`قطعه ${chunkIndex} ناموفق بود؛ تلاش دوباره ${attempts + 1}…`, "error");
+          await wait(1200 * attempts);
+        }
+      }
+    }
+
+    const fileName = fileInfo?.fileName;
+    if (!fileName) throw new Error("Gemini فایل نهایی را ثبت نکرد.");
+    let fileState = String(fileInfo.state || "PROCESSING").toUpperCase();
+    let fileInfoCurrent = fileInfo;
+    let polls = 0;
+    while (fileState !== "ACTIVE") {
+      if (fileState === "FAILED") throw new Error(fileInfoCurrent.detail || "Gemini نتوانست فایل ویدئو را پردازش کند.");
       polls += 1;
-      const percent = Math.min(52, 22 + Math.min(28, polls * 2));
-      setProgress(percent, "پردازش ویدئو", `Gemini در حال آماده‌سازی ویدئو است… وضعیت: ${stateName}`);
-      if (polls === 1) log("فایل دریافت شد؛ Gemini در حال پردازش ویدئو است.");
+      const percent = Math.min(58, 50 + Math.min(8, polls));
+      setProgress(percent, "پردازش ویدئو", `Gemini در حال آماده‌سازی ویدئو است… وضعیت: ${fileState}`);
+      if (polls === 1) log("آپلود کامل شد؛ Gemini در حال پردازش ویدئو است.", "success");
       await wait(3500);
-      fileInfo = await requestJson(`${window.location.origin}/api/analyze-video/file-status?name=${encodeURIComponent(fileName)}`);
+      fileInfoCurrent = await requestJson(`${window.location.origin}/api/analyze-video/file-status?name=${encodeURIComponent(fileName)}`, {}, 45000);
+      fileState = String(fileInfoCurrent.state || "PROCESSING").toUpperCase();
       if (polls > 90) throw new Error("پردازش فایل در Gemini بیش از حد طول کشید. ویدئوی کوتاه‌تر یا کم‌حجم‌تر امتحان کن.");
     }
 
-    setProgress(55, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
-    log("مرحله ۲ از ۳: فایل آماده شد؛ تحلیل پس‌زمینه شروع می‌شود.", "success");
+    setProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
+    log("مرحله ۲: فایل آماده شد؛ تحلیل پس‌زمینه شروع می‌شود.", "success");
     const formStart = {
-      fileName: fileInfo.fileName || fileName,
-      fileUri: fileInfo.fileUri || uploaded.fileUri,
-      mimeType: fileInfo.mimeType || uploaded.mimeType || "video/mp4",
+      fileName: fileInfoCurrent.fileName || fileName,
+      fileUri: fileInfoCurrent.fileUri || fileInfo.fileUri,
+      mimeType: fileInfoCurrent.mimeType || fileInfo.mimeType || mimeType,
       brand: $("#brand")?.value.trim() || "",
       description: $("#desc")?.value.trim() || "",
       language: state.language,
       duration: String(state.duration),
       platform: platformLabel(state.platform)
     };
-    const started = await requestJson(`${window.location.origin}/api/analyze-video/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formStart) });
+    const started = await requestJson(`${window.location.origin}/api/analyze-video/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formStart) }, 45000);
     const interactionId = started.interactionId;
     let result = null;
     let interactionPolls = 0;
 
     while (!result) {
       interactionPolls += 1;
-      setProgress(Math.min(94, 58 + Math.min(36, interactionPolls * 2)), "تحلیل محتوای ویدئو", "Gemini در حال بررسی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
-      if (interactionPolls === 1) log("مرحله ۳ از ۳: تحلیل محتوای واقعی ویدئو در پس‌زمینه اجرا شد.");
+      setProgress(Math.min(94, 60 + Math.min(34, interactionPolls * 2)), "تحلیل محتوای ویدئو", "Gemini در حال بررسی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
+      if (interactionPolls === 1) log("مرحله ۳: تحلیل محتوای واقعی ویدئو در پس‌زمینه اجرا شد.");
       await wait(4000);
-      const status = await requestJson(`${window.location.origin}/api/analyze-video/interaction-status?id=${encodeURIComponent(interactionId)}`);
+      const status = await requestJson(`${window.location.origin}/api/analyze-video/interaction-status?id=${encodeURIComponent(interactionId)}`, {}, 45000);
       if (status.status === "completed") result = status;
       else if (["failed", "cancelled"].includes(String(status.status).toLowerCase())) throw new Error(status.detail || "تحلیل Gemini ناموفق شد.");
       if (interactionPolls > 120) throw new Error("تحلیل ویدئو بیش از حد طول کشید؛ لطفاً دوباره تلاش کن.");
