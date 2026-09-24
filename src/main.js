@@ -252,8 +252,21 @@ $("#scriptBtn").onclick = async () => {
 
     setStage(1); setProgress(25, "نوشتن سناریو", t("script")); log("درخواست سناریو به API ارسال شد.");
     let j;
-    try { j = await api("/api/generate-script", { brand, description: desc, language: state.language, duration: state.duration, style: state.style, targetWords: targetWordsForDuration(state.duration) }); }
-    catch (e) { log("اتصال به API سناریو ناموفق بود؛ حالت داخلی فعال شد.", "error"); j = { script: fallbackScript(brand, desc), fallback: true, provider: "local" }; }
+    try {
+      j = await api("/api/generate-script", { brand, description: desc, language: state.language, duration: state.duration, style: state.style, targetWords: targetWordsForDuration(state.duration) });
+      if (j.fallback) {
+        const reason = j.detail || j.error || "خطای نامشخص";
+        log(`API سناریو پاسخ کامل نداد؛ حالت داخلی فعال شد. علت: ${reason}`, "error");
+        if (j.error === "no_ai_provider_configured" || j.error === "openrouter_missing_api_key") {
+          log("کلید OPENROUTER_API_KEY در محیط Production این پروژه در دسترس Worker نیست. بعد از تنظیم Secret حتماً Deploy جدید انجام بده.", "error");
+        }
+      }
+    } catch (e) {
+      let reason = String(e?.message || e);
+      try { const parsed = JSON.parse(reason); reason = parsed.detail || parsed.error || reason; } catch (_) {}
+      log(`اتصال به API سناریو ناموفق بود؛ حالت داخلی فعال شد. علت: ${reason}`, "error");
+      j = { script: fallbackScript(brand, desc), fallback: true, provider: "local", error: "frontend_api_error" };
+    }
     state.script = j.script || fallbackScript(brand, desc);
     $("#scriptEditor").value = state.script; $("#scriptEditor").disabled = false; $("#editScript").disabled = false;
     updateScriptMeta(state.script, j.provider || (j.fallback ? "داخلی" : "AI"));
