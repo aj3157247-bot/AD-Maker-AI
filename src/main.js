@@ -7,6 +7,9 @@ const state = {
   language: "en",
   duration: 15,
   script: "",
+  scriptMode: "ai",
+  customScript: "",
+  activeView: "preview",
   busy: false,
   voiceBlob: null,
   lastVideo: null,
@@ -105,15 +108,21 @@ function renderShell() {
             <div class="field"><label>مدت</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select></div>
           </div>
 
-          <div class="field"><label>پلتفرم تبلیغ</label><div class="style-grid platform-grid">
-            <button class="style-chip active" data-style="youtube_short"><i>▶</i><span>YouTube Shorts</span></button>
-            <button class="style-chip" data-style="youtube"><i>▶</i><span>YouTube</span></button>
-            <button class="style-chip" data-style="tiktok"><i>♪</i><span>TikTok</span></button>
-            <button class="style-chip" data-style="instagram_reels"><i>◎</i><span>Instagram Reels</span></button>
-            <button class="style-chip" data-style="facebook"><i>f</i><span>Facebook</span></button>
-            <button class="style-chip" data-style="instagram"><i>◎</i><span>Instagram</span></button>
-            <button class="style-chip" data-style="linkedin"><i>in</i><span>LinkedIn</span></button>
-            <button class="style-chip" data-style="whatsapp"><i>◌</i><span>WhatsApp</span></button>
+          <div class="field scenario-mode-field"><label>روش ساخت سناریو</label><div class="scenario-mode-grid">
+            <button type="button" class="scenario-mode active" data-script-mode="ai"><i>✦</i><span>سناریوی هوشمند</span><small>ساخت کامل با AI</small></button>
+            <button type="button" class="scenario-mode" data-script-mode="manual"><i>✎</i><span>سناریوی اختصاصی من</span><small>متن را خودت می‌نویسی</small></button>
+            <button type="button" class="scenario-mode" data-script-mode="hybrid"><i>✦+</i><span>همکاری من + AI</span><small>متن تو، پرداخت حرفه‌ای با AI</small></button>
+          </div><div id="customScriptWrap" class="custom-script-wrap" hidden><textarea id="customScript" placeholder="سناریوی خودت را اینجا بنویس..."></textarea><small>در حالت «همکاری من + AI»، متن تو حفظ می‌شود و AI آن را حرفه‌ای، منسجم و متناسب با زمان ویدئو بازنویسی می‌کند.</small></div></div>
+
+          <div class="field"><div class="platform-title"><label>پلتفرم تبلیغ</label><span id="selectedPlatform">YouTube Shorts · 9:16</span></div><div class="style-grid platform-grid">
+            <button type="button" class="style-chip active" data-style="youtube_short"><i>▶</i><span>YouTube Shorts</span></button>
+            <button type="button" class="style-chip" data-style="youtube"><i>▶</i><span>YouTube</span></button>
+            <button type="button" class="style-chip" data-style="tiktok"><i>♪</i><span>TikTok</span></button>
+            <button type="button" class="style-chip" data-style="instagram_reels"><i>◎</i><span>Instagram Reels</span></button>
+            <button type="button" class="style-chip" data-style="facebook"><i>f</i><span>Facebook</span></button>
+            <button type="button" class="style-chip" data-style="instagram"><i>◎</i><span>Instagram</span></button>
+            <button type="button" class="style-chip" data-style="linkedin"><i>in</i><span>LinkedIn</span></button>
+            <button type="button" class="style-chip" data-style="whatsapp"><i>◌</i><span>WhatsApp</span></button>
           </div></div>
 
           <div class="field media-field"><div class="field-title"><label>رسانه‌های تبلیغ</label><span>هر تعداد</span></div><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>برای بهترین نتیجه، همه تصاویر و کلیپ‌های محصولت را انتخاب کن.</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div></div>
@@ -123,7 +132,7 @@ function renderShell() {
             <div class="color-row"><input id="brandColor" type="color" value="#7c5cff" aria-label="رنگ برند"><span id="colorHex">#7C5CFF</span></div>
           </div>
 
-          <div class="button-row"><button id="scriptBtn" class="primary big">✦ ساخت تبلیغ با AI</button><button id="demoBtn" class="secondary demo-btn">نمونه</button></div>
+          <div class="button-row"><button id="scriptBtn" class="primary big">✦ ساخت سناریوی هوشمند</button><button id="demoBtn" class="secondary demo-btn">نمونه</button></div>
         </section>
 
         <section class="production card">
@@ -139,14 +148,23 @@ function renderShell() {
           <details class="ops-details"><summary><span>جزئیات عملیات</span><em>نمایش</em></summary><div class="live-log"><div class="log-head"><span>وضعیت ساخت</span><button id="clearLog" class="tiny-btn">پاک کردن</button></div><div id="log" class="log"><div class="log-line muted"><span>●</span> منتظر شروع پروژه...</div></div></div></details>
         </section>
 
-        <section class="result card">
+        <section class="view-switch card">
+          <div class="section-head"><div><small>دسته‌ها</small><h2>بخش کاری</h2></div><span id="viewState">استودیو</span></div>
+          <div class="view-tabs">
+            <button type="button" class="view-tab active" data-view="preview"><span>🎬</span><b>استودیو و پیش‌نمایش</b><small>ساخت، مشاهده و دانلود</small></button>
+            <button type="button" class="view-tab" data-view="library"><span>▣</span><b>کتابخانه ویدئوها</b><small>ویدئوهای ساخته‌شده</small></button>
+          </div>
+          <div class="view-hint">از «دسته‌ها» بخش موردنظر را انتخاب کن؛ هر بار فقط همان بخش نمایش داده می‌شود.</div>
+        </section>
+
+        <section class="result card workspace-panel" data-workspace="preview">
           <div class="section-head"><div><small>مرحله ۳</small><h2>پیش‌نمایش و خروجی</h2></div><span id="outputState">آماده ساخت</span></div>
           <div id="stage" class="video-stage"><div class="empty"><div>✦</div><strong>ویدئوی نهایی اینجا نمایش داده می‌شود</strong><small id="stageFormat">خروجی 9:16 با صدا و زیرنویس</small></div></div>
           <div class="output-actions"><button id="renderBtn" class="primary" disabled>▶ ساخت ویدئو</button><button id="downloadBtn" class="secondary" disabled>↓ دانلود</button></div>
           <div id="resultActions" class="result-extra" hidden><button id="rerenderBtn" class="secondary">↻ ساخت دوباره</button><button id="newBtn" class="ghost">＋ پروژه جدید</button></div>
         </section>
 
-        <section class="library card">
+        <section class="library card workspace-panel" data-workspace="library" hidden>
           <div class="section-head"><div><small>کتابخانه</small><h2>ویدئوهای ساخته‌شده</h2></div><span id="libraryCount">0 ویدئو</span></div>
           <div id="videoLibrary" class="video-library"><div class="library-empty"><div>▣</div><strong>هنوز ویدئویی ذخیره نشده</strong><small>ویدئوهای ساخته‌شده را اینجا نگه می‌داریم تا بعداً دوباره ببینی، دانلود کنی یا حذف کنی.</small></div></div>
         </section>
@@ -196,8 +214,9 @@ function resetPipeline() {
 
 function updateScriptMeta(script, source) {
   const words = script.trim().split(/\s+/).filter(Boolean).length;
+  const sourceLabel = ({ user: "سناریوی اختصاصی من", openrouter: "سناریوی هوشمند AI", "cloudflare-ai": "سناریوی هوشمند AI", داخلی: "حالت داخلی AI" })[source] || source || "—";
   $("#scriptCount").textContent = `${words} کلمه`;
-  $("#scriptSource").textContent = `منبع: ${source}`;
+  $("#scriptSource").textContent = `منبع: ${sourceLabel}`;
 }
 
 function base64ToBlob(b64, mime) {
@@ -299,6 +318,7 @@ function platformLabel(code) { return ({youtube_short:"YouTube Shorts",youtube:"
 function outputRatio(code) { return ({youtube:"16:9",instagram:"1:1",facebook:"4:5",linkedin:"1:1",youtube_short:"9:16",tiktok:"9:16",instagram_reels:"9:16",whatsapp:"9:16"})[code] || "9:16"; }
 
 function fallbackScript(brand, desc) {
+  if ((state.scriptMode === "manual" || state.scriptMode === "hybrid") && state.customScript) return state.customScript;
   if (state.language === "en") return `${brand}. ${desc}. Discover a simpler way to get what you need. Try ${brand} today and take the next step.`;
   if (state.language === "ps") return `${brand}. ${desc}. د خپلو اړتیاوو لپاره اسانه لاره پیدا کړئ. ${brand} همدا اوس تجربه کړئ او خپل بل ګام واخلئ.`;
   return `${brand}. ${desc}. راهی ساده برای رسیدن به نیازت پیدا کن. همین امروز ${brand} را تجربه کن و قدم بعدی را بردار.`;
@@ -329,7 +349,48 @@ $("#lang").onchange = e => { state.language = e.target.value; setDir(); $("#bran
 $("#duration").onchange = e => state.duration = +e.target.value;
 $("#brandColor").oninput = e => { state.brandColor = e.target.value; $("#colorHex").textContent = e.target.value.toUpperCase(); document.documentElement.style.setProperty("--brand", e.target.value); };
 
-$(".style-chip").forEach(btn => btn.onclick = () => { $(".style-chip").forEach(x => x.classList.remove("active")); btn.classList.add("active"); state.style = btn.dataset.style; state.platform = btn.dataset.style; $("#stageFormat").textContent = `خروجی ${outputRatio(state.platform)} با صدا و زیرنویس`; });
+function updatePlatformUI() {
+  const label = platformLabel(state.platform);
+  const ratio = outputRatio(state.platform);
+  $(".style-chip").forEach(x => x.classList.toggle("active", x.dataset.style === state.platform));
+  $("#selectedPlatform").textContent = `${label} · ${ratio}`;
+  $("#stageFormat").textContent = `خروجی ${ratio} با صدا و زیرنویس`;
+}
+
+document.addEventListener("click", e => {
+  const platform = e.target.closest(".style-chip[data-style]");
+  if (platform) {
+    e.preventDefault();
+    state.style = platform.dataset.style;
+    state.platform = platform.dataset.style;
+    updatePlatformUI();
+    log(`پلتفرم خروجی روی «${platformLabel(state.platform)}» تنظیم شد.`, "success");
+    return;
+  }
+  const mode = e.target.closest(".scenario-mode[data-script-mode]");
+  if (mode) {
+    e.preventDefault();
+    state.scriptMode = mode.dataset.scriptMode;
+    $(".scenario-mode").forEach(x => x.classList.toggle("active", x === mode));
+    const custom = $("#customScriptWrap");
+    custom.hidden = state.scriptMode === "ai";
+    $("#scriptBtn").textContent = state.scriptMode === "manual" ? "✎ آماده‌سازی سناریوی من" : state.scriptMode === "hybrid" ? "✦+ پرداخت سناریو با AI" : "✦ ساخت سناریوی هوشمند";
+    return;
+  }
+  const view = e.target.closest(".view-tab[data-view]");
+  if (view) {
+    e.preventDefault();
+    state.activeView = view.dataset.view;
+    $(".view-tab").forEach(x => x.classList.toggle("active", x === view));
+    $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== state.activeView; });
+    $("#viewState").textContent = state.activeView === "library" ? "کتابخانه" : "استودیو";
+    if (state.activeView === "library") renderVideoLibrary();
+    const target = document.querySelector(`[data-workspace="${state.activeView}"]`);
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
+
+updatePlatformUI();
 
 $("#demoBtn").onclick = () => {
   $("#brand").value = "بازارک";
@@ -342,7 +403,12 @@ $("#demoBtn").onclick = () => {
 $("#scriptBtn").onclick = async () => {
   if (state.busy) return;
   const brand = $("#brand").value.trim(), desc = $("#desc").value.trim();
-  if (!brand || !desc) { setProgress(0, "اطلاعات ناقص", t("missing")); log(t("missing"), "error"); return; }
+  const customScript = $("#customScript").value.trim();
+  state.customScript = customScript;
+  if (!brand || (state.scriptMode !== "manual" && !desc) || (state.scriptMode !== "ai" && !customScript)) {
+    const msg = state.scriptMode === "manual" ? "نام برند و متن سناریوی اختصاصی را وارد کن." : state.scriptMode === "hybrid" ? "نام برند، توضیح محصول و متن سناریوی خودت را وارد کن." : t("missing");
+    setProgress(0, "اطلاعات ناقص", msg); log(msg, "error"); return;
+  }
   state.busy = true; state.generated = false; $("#scriptBtn").disabled = true; $("#renderBtn").disabled = true; $("#downloadBtn").disabled = true;
   $("#resultActions").hidden = true; $("#scriptEditor").disabled = true; $("#editScript").disabled = true;
   $("#log").innerHTML = ""; $("#stage").innerHTML = `<div class="processing"><div class="spinner"></div><strong>در حال آماده‌سازی پروژه...</strong><small>این صفحه در طول کار وضعیت واقعی هر مرحله را نشان می‌دهد.</small></div>`;
@@ -352,10 +418,13 @@ $("#scriptBtn").onclick = async () => {
     setStage(0); setProgress(10, "تحلیل پروژه", t("analyze")); log(`شروع پروژه «${brand}» با ${state.assets.length} رسانه.`); await wait(250);
     if (state.assets.length) log(t("mediaReady"), "success"); else log(t("noMedia"));
 
-    setStage(1); setProgress(25, "نوشتن سناریو", t("script")); log("درخواست سناریو به API ارسال شد.");
+    setStage(1); setProgress(25, "آماده‌سازی سناریو", state.scriptMode === "manual" ? "سناریوی اختصاصی تو آماده می‌شود." : state.scriptMode === "hybrid" ? "AI سناریوی تو را حرفه‌ای‌تر و منسجم‌تر می‌کند." : t("script"));
     let j;
-    try {
-      j = await api("/api/generate-script", { brand, description: desc, language: state.language, duration: state.duration, style: state.style, targetWords: targetWordsForDuration(state.duration) });
+    if (state.scriptMode === "manual") {
+      j = { script: customScript, fallback: false, provider: "user" };
+      log("سناریوی اختصاصی کاربر انتخاب شد.", "success");
+    } else try {
+      j = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords: targetWordsForDuration(state.duration) });
       if (j.fallback) {
         const reason = j.detail || j.error || "خطای نامشخص";
         log(`API سناریو پاسخ کامل نداد؛ حالت داخلی فعال شد. علت: ${reason}`, "error");
@@ -375,7 +444,7 @@ $("#scriptBtn").onclick = async () => {
     const expectedWords = targetWordsForDuration(state.duration);
     const actualWords = state.script.trim().split(/\s+/).filter(Boolean).length;
     log(`${actualWords} کلمه برای ویدئوی ${Math.round(state.duration / 60) >= 1 ? `${Math.round(state.duration / 60)} دقیقه` : `${state.duration} ثانیه`} آماده شد؛ هدف تقریبی ${expectedWords} کلمه است.`, actualWords >= Math.round(expectedWords * 0.72) ? "success" : "info");
-    log(j.fallback ? t("fallback") : "سناریوی AI با موفقیت دریافت شد.", j.fallback ? "info" : "success");
+    log(state.scriptMode === "manual" ? "سناریوی اختصاصی آماده شد." : state.scriptMode === "hybrid" ? "سناریو با همکاری کاربر و AI آماده شد." : (j.fallback ? t("fallback") : "سناریوی هوشمند با موفقیت دریافت شد."), j.fallback ? "info" : "success");
     setStage(1, "done");
 
     setStage(2); setProgress(42, "گویندگی", t("voice")); log("درخواست ساخت گویندگی ارسال شد.");
@@ -550,7 +619,7 @@ $("#downloadBtn").onclick = () => {
 };
 
 $("#rerenderBtn").onclick = () => $("#renderBtn").click();
-$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.voiceBlob = null; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#scriptEditor").disabled = true; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
+$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.activeView = "preview"; state.voiceBlob = null; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".scenario-mode").forEach(x => x.classList.toggle("active", x.dataset.scriptMode === "ai")); $("#scriptBtn").textContent = "✦ ساخت سناریوی هوشمند"; $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
 $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line muted"><span>●</span> منتظر عملیات بعدی...</div>`; };
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
 $("#scriptMore").onclick = () => { const box = $("#scriptEditor"); const details = $(".script-details"); details.open = true; box.classList.toggle("expanded"); $("#scriptMore").textContent = box.classList.contains("expanded") ? "کمتر" : "بیشتر"; if (box.classList.contains("expanded")) { box.style.height = "auto"; box.style.height = `${Math.max(180, box.scrollHeight)}px`; } else box.style.height = "82px"; };
