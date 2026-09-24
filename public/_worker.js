@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "2.4.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "2.5.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
@@ -20,6 +20,11 @@ async function generateScript(request, env) {
     const languageNames = { en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian", ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" };
     const lang = languageNames[b.language] || "Persian";
     const style = b.style || "YouTube Shorts";
+    const scriptMode = b.scriptMode || "ai";
+    const customScript = String(b.customScript || "").trim();
+    const modeInstruction = scriptMode === "hybrid" && customScript
+      ? `\nThe user also supplied a draft script below. Preserve its meaning and factual claims, but professionally rewrite and expand it to fit the target duration. Improve the hook, flow, benefits, transitions and call to action without inventing unsupported facts.\n\nUser draft script:\n${customScript}`
+      : "";
 
     const prompt = `You are an expert advertising copywriter creating a complete voice-over for an Afghanistan-focused product advertisement.
 
@@ -40,7 +45,7 @@ Requirements:
 - Build a clear opening hook, explanation, benefits, practical value, and ending call to action.
 - The script should be coherent from beginning to end and should not repeat the same sentence just to increase length.
 - Aim for approximately ${targetWords} words (within about 15% if possible).
-- The selected duration is the priority: do not return a short 15–30 second script for a multi-minute request.`;
+- The selected duration is the priority: do not return a short 15–30 second script for a multi-minute request.${modeInstruction}`;
 
     if (env.OPENROUTER_API_KEY) {
       let script = await openRouterScript(env.OPENROUTER_API_KEY, prompt, request);
@@ -343,6 +348,8 @@ function arrayBufferToBase64(buf) {
 function fallback(b) {
   const brand = b.brand || "AD Maker AI";
   const desc = b.description || "یک محصول یا خدمت کاربردی";
+  const custom = String(b.customScript || "").trim();
+  if ((b.scriptMode === "manual" || b.scriptMode === "hybrid") && custom) return custom;
   const duration = Math.max(15, Math.min(300, Number(b.duration) || 15));
   const base = b.language === "en"
     ? `${brand}. ${desc}. Discover what it can do, understand its value, and see how it can make your experience simpler. ${brand} is designed around the needs described in this advertisement. Explore the details, choose what fits your needs, and take the next step today.`
