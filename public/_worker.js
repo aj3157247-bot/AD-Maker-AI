@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "3.2.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "3.3.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -111,15 +111,18 @@ async function uploadAnalysisVideo(request, env) {
     const uploadUrl = start.headers.get("x-goog-upload-url");
     if (!uploadUrl) return json({ error: "gemini_upload_url_missing", detail: "Gemini آدرس آپلود ویدئو را برنگرداند." }, 502);
 
+    // Buffer the small/medium upload so Gemini receives an exact Content-Length
+    // and the request is not dependent on streaming behavior through Pages.
+    const body = await file.arrayBuffer();
     const upload = await fetch(uploadUrl, {
       method: "POST",
       headers: {
-        "Content-Length": String(size),
+        "Content-Length": String(body.byteLength),
         "X-Goog-Upload-Offset": "0",
         "X-Goog-Upload-Command": "upload, finalize",
         "Content-Type": mime
       },
-      body: file.stream()
+      body
     });
     if (!upload.ok) return json({ error: "gemini_upload_failed", detail: await safeGoogleError(upload) }, upload.status || 502);
     const uploaded = await upload.json();
