@@ -648,7 +648,7 @@ async function loadImageFile(file, objectUrl) {
   // gallery names such as jpg.1000052843 where File.type is empty.
   try {
     const kind = await sniffMediaType(file);
-    const mime = kind === "image" ? sniffImageMime(file) : null;
+    const mime = kind === "image" ? await sniffImageMime(file) : null;
     const blob = mime ? new Blob([await file.arrayBuffer()], { type: mime }) : file;
     const url = URL.createObjectURL(blob);
     const img = new Image();
@@ -681,6 +681,40 @@ async function sniffImageMime(file) {
     if (head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46 && head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50) return "image/webp";
   } catch (_) {}
   return null;
+}
+
+function waitForImage(img, name = "فایل") {
+  return new Promise((resolve, reject) => {
+    if (img.complete && img.naturalWidth > 0) return resolve(img);
+    const onLoad = () => { cleanup(); resolve(img); };
+    const onError = () => { cleanup(); reject(new Error(`خواندن تصویر «${name}» ناموفق بود.`)); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error(`زمان خواندن تصویر «${name}» تمام شد.`)); }, 12000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      img.removeEventListener("load", onLoad);
+      img.removeEventListener("error", onError);
+    };
+    img.addEventListener("load", onLoad, { once: true });
+    img.addEventListener("error", onError, { once: true });
+  });
+}
+
+function waitForVideo(video, name = "فایل", metadataOnly = false) {
+  return new Promise((resolve, reject) => {
+    const event = metadataOnly ? "loadedmetadata" : "canplay";
+    if ((metadataOnly && video.readyState >= 1) || (!metadataOnly && video.readyState >= 3)) return resolve(video);
+    const onReady = () => { cleanup(); resolve(video); };
+    const onError = () => { cleanup(); reject(new Error(`خواندن ویدئو «${name}» ناموفق بود.`)); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error(`زمان خواندن ویدئو «${name}» تمام شد.`)); }, 15000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      video.removeEventListener(event, onReady);
+      video.removeEventListener("error", onError);
+    };
+    video.addEventListener(event, onReady, { once: true });
+    video.addEventListener("error", onError, { once: true });
+    video.load();
+  });
 }
 
 function fileToDataUrl(file) {
