@@ -2,36 +2,35 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "2.8.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "3.0.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
-    if (url.pathname === "/api/analyze-video" && request.method === "POST") return analyzeVideo(request, env);
+    if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
+    if (url.pathname === "/api/analyze-video/file-status" && request.method === "GET") return analysisFileStatus(request, env);
+    if (url.pathname === "/api/analyze-video/start" && request.method === "POST") return startVideoAnalysis(request, env);
+    if (url.pathname === "/api/analyze-video/interaction-status" && request.method === "GET") return analysisInteractionStatus(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
     return env.ASSETS.fetch(request);
   }
 };
 
-async function analyzeVideo(request, env) {
-  try {
-    if (!env.GEMINI_API_KEY) {
-      return json({ error: "gemini_missing_api_key", detail: "برای تحلیل مستقیم ویدئو باید Secret با نام GEMINI_API_KEY را در Cloudflare اضافه کنی." }, 503);
-    }
+async function requireGemini(env) {
+  if (!env.GEMINI_API_KEY) return json({ error: "gemini_missing_api_key", detail: "برای تحلیل مستقیم ویدئو باید Secret با نام GEMINI_API_KEY را در Cloudflare اضافه کنی." }, 503);
+  return null;
+}
 
+async function uploadAnalysisVideo(request, env) {
+  try {
+    const missing = await requireGemini(env);
+    if (missing) return missing;
     const form = await request.formData();
     const file = form.get("video");
     if (!(file instanceof File)) return json({ error: "video_required", detail: "فایل ویدئو دریافت نشد." }, 400);
-
-    const brand = String(form.get("brand") || "").trim();
-    const description = String(form.get("description") || "").trim();
-    const language = String(form.get("language") || "fa").toLowerCase();
-    const duration = Math.max(15, Math.min(300, Number(form.get("duration")) || 60));
-    const platform = String(form.get("platform") || "YouTube Shorts");
-    const mime = String(file.type || "video/mp4");
     const size = Number(file.size || 0);
     if (!size) return json({ error: "empty_video", detail: "فایل ویدئو خالی است." }, 400);
     if (size > 100 * 1024 * 1024) return json({ error: "video_too_large", detail: "برای این مسیر، حجم ویدئو را زیر 100MB نگه دار." }, 413);
+    const mime = String(file.type || "video/mp4");
 
-    // Upload the video to Gemini Files API without exposing the Gemini key to the browser.
     const start = await fetch("https://generativelanguage.googleapis.com/upload/v1beta/files", {
       method: "POST",
       headers: {
@@ -44,10 +43,7 @@ async function analyzeVideo(request, env) {
       },
       body: JSON.stringify({ file: { display_name: file.name || `ad-maker-video-${Date.now()}` } })
     });
-    if (!start.ok) {
-      const detail = await safeGoogleError(start);
-      return json({ error: "gemini_upload_start_failed", detail }, start.status || 502);
-    }
+    if (!start.ok) return json({ error: "gemini_upload_start_failed", detail: await safeGoogleError(start) }, start.status || 502);
     const uploadUrl = start.headers.get("x-goog-upload-url");
     if (!uploadUrl) return json({ error: "gemini_upload_url_missing", detail: "Gemini آدرس آپلود ویدئو را برنگرداند." }, 502);
 
@@ -61,32 +57,47 @@ async function analyzeVideo(request, env) {
       },
       body: file.stream()
     });
-    if (!upload.ok) {
-      const detail = await safeGoogleError(upload);
-      return json({ error: "gemini_upload_failed", detail }, upload.status || 502);
-    }
+    if (!upload.ok) return json({ error: "gemini_upload_failed", detail: await safeGoogleError(upload) }, upload.status || 502);
     const uploaded = await upload.json();
-    const fileName = uploaded?.file?.name;
-    const fileUri = uploaded?.file?.uri;
-    if (!fileName || !fileUri) return json({ error: "gemini_file_missing", detail: "Gemini فایل ویدئو را ثبت نکرد." }, 502);
+    const info = uploaded?.file;
+    if (!info?.name || !info?.uri) return json({ error: "gemini_file_missing", detail: "Gemini فایل ویدئو را ثبت نکرد." }, 502);
+    return json({ ok: true, fileName: info.name, fileUri: info.uri, mimeType: info.mimeType || mime, state: info.state || "PROCESSING", videoName: file.name || "video" });
+  } catch (e) {
+    return json({ error: "video_upload_exception", detail: String(e?.message || e) }, 500);
+  }
+}
 
-    let fileInfo = uploaded.file;
-    for (let i = 0; i < 36; i++) {
-      const state = String(fileInfo?.state || "").toUpperCase();
-      if (state === "ACTIVE") break;
-      if (state === "FAILED") return json({ error: "gemini_video_processing_failed", detail: "Gemini نتوانست ویدئو را پردازش کند." }, 502);
-      await new Promise(r => setTimeout(r, 2500));
-      const check = await fetch(`https://generativelanguage.googleapis.com/v1beta/${fileName}`, { headers: { "x-goog-api-key": env.GEMINI_API_KEY } });
-      if (!check.ok) {
-        const detail = await safeGoogleError(check);
-        return json({ error: "gemini_file_status_failed", detail }, check.status || 502);
-      }
-      fileInfo = await check.json();
-    }
-    if (String(fileInfo?.state || "").toUpperCase() !== "ACTIVE") {
-      return json({ error: "gemini_video_processing_timeout", detail: "پردازش ویدئو در Gemini طولانی شد؛ یک ویدئوی کوتاه‌تر امتحان کن." }, 504);
-    }
+async function analysisFileStatus(request, env) {
+  try {
+    const missing = await requireGemini(env);
+    if (missing) return missing;
+    const name = new URL(request.url).searchParams.get("name");
+    if (!name || !/^files\/[A-Za-z0-9._-]+$/.test(name)) return json({ error: "file_name_required", detail: "شناسه فایل Gemini معتبر نیست." }, 400);
+    const check = await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}`, { headers: { "x-goog-api-key": env.GEMINI_API_KEY } });
+    if (!check.ok) return json({ error: "gemini_file_status_failed", detail: await safeGoogleError(check) }, check.status || 502);
+    const info = await check.json();
+    const state = String(info?.state || "PROCESSING").toUpperCase();
+    return json({ ok: state === "ACTIVE", state, fileName: info?.name || name, fileUri: info?.uri || "", mimeType: info?.mimeType || "", detail: state === "FAILED" ? "Gemini نتوانست ویدئو را پردازش کند." : "" });
+  } catch (e) {
+    return json({ error: "video_file_status_exception", detail: String(e?.message || e) }, 500);
+  }
+}
 
+async function startVideoAnalysis(request, env) {
+  try {
+    const missing = await requireGemini(env);
+    if (missing) return missing;
+    const b = await request.json();
+    const fileName = String(b.fileName || "");
+    const fileUri = String(b.fileUri || "");
+    if (!/^files\/[A-Za-z0-9._-]+$/.test(fileName) || !fileUri) return json({ error: "gemini_file_required", detail: "فایل آماده Gemini برای شروع تحلیل مشخص نشده است." }, 400);
+
+    const brand = String(b.brand || "").trim();
+    const description = String(b.description || "").trim();
+    const language = String(b.language || "fa").toLowerCase();
+    const duration = Math.max(15, Math.min(300, Number(b.duration) || 60));
+    const platform = String(b.platform || "YouTube Shorts");
+    const mime = String(b.mimeType || "video/mp4");
     const langName = { en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian", ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" }[language] || "Persian";
     const targetWords = Math.max(35, Math.min(900, Math.round(duration * 2.2)));
     const prompt = `Analyze this product/site demonstration video for AD Maker AI. The video may show a website or app such as a marketplace. Identify what is visibly demonstrated, in order, with approximate timestamps. Read visible UI text when possible. Do not invent features that are not shown or stated.
@@ -102,45 +113,73 @@ Return ONLY valid JSON with this exact shape:
 {
   "summary": "short factual summary",
   "facts": ["only verified facts from the video or user description"],
-  "scenes": [
-    {"start":"00:00","end":"00:08","title":"short title","description":"what is visibly happening"}
-  ],
+  "scenes": [{"start":"00:00","end":"00:08","title":"short title","description":"what is visibly happening"}],
   "script": "complete professional voice-over in the requested language"
 }
 
 For the script: narrate the actual sequence of the video so the voice matches what viewers see. Use a strong opening, explain the demonstrated features in order, add transitions, and finish with a call to action. Never invent prices, discounts, statistics, ratings, guarantees, users, locations, or features. If a feature is uncertain, omit it. Return only the JSON object.`;
 
     const model = env.GEMINI_MODEL || "gemini-3.8-flash";
-    const gen = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    const gen = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
       method: "POST",
-      headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
+      headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json", "Api-Revision": "2026-05-20" },
       body: JSON.stringify({
-        contents: [{ parts: [
-          { file_data: { mime_type: mime, file_uri: fileUri } },
-          { text: prompt }
-        ] }],
-        generationConfig: { temperature: 0.35, responseMimeType: "application/json" }
+        model,
+        background: true,
+        input: [
+          { type: "video", uri: fileUri, mime_type: mime, processing: "static" },
+          { type: "text", text: prompt }
+        ],
+        generation_config: { temperature: 0.35, max_output_tokens: 5000 }
       })
     });
-    if (!gen.ok) {
-      const detail = await safeGoogleError(gen);
-      return json({ error: "gemini_analysis_failed", detail, model }, gen.status || 502);
-    }
-    const result = await gen.json();
-    const text = result?.candidates?.[0]?.content?.parts?.map(p => p?.text || "").join(" ").trim();
-    if (!text) return json({ error: "gemini_empty_analysis", detail: "Gemini پاسخ تحلیلی قابل استفاده برنگرداند." }, 502);
-    let parsed;
-    try { parsed = JSON.parse(text); } catch (_) {
-      const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-      try { parsed = JSON.parse(cleaned); } catch (_) { return json({ error: "gemini_invalid_json", detail: "پاسخ تحلیل ویدئو ساختار JSON معتبر نداشت." }, 502); }
-    }
-    const scenes = Array.isArray(parsed.scenes) ? parsed.scenes.slice(0, 40) : [];
-    const facts = Array.isArray(parsed.facts) ? parsed.facts.slice(0, 60) : [];
-    const script = String(parsed.script || "").trim();
-    if (!script) return json({ error: "gemini_no_script", detail: "Gemini تحلیل را انجام داد اما سناریوی صوتی برنگرداند." }, 502);
-    return json({ ok: true, provider: "gemini-video", model, summary: String(parsed.summary || ""), facts, scenes, script, videoName: file.name || "video" });
+    if (!gen.ok) return json({ error: "gemini_analysis_start_failed", detail: await safeGoogleError(gen), model }, gen.status || 502);
+    const interaction = await gen.json();
+    if (!interaction?.id) return json({ error: "gemini_interaction_missing", detail: "Gemini شناسه عملیات پس‌زمینه را برنگرداند.", model }, 502);
+    return json({ ok: true, interactionId: interaction.id, status: interaction.status || "in_progress", model });
   } catch (e) {
-    return json({ error: "video_analysis_exception", detail: String(e?.message || e) }, 500);
+    return json({ error: "video_analysis_start_exception", detail: String(e?.message || e) }, 500);
+  }
+}
+
+function extractInteractionText(result) {
+  if (String(result?.output_text || "").trim()) return String(result.output_text).trim();
+  const parts = [];
+  for (const step of Array.isArray(result?.steps) ? result.steps : []) {
+    if (step?.type !== "model_output") continue;
+    for (const c of Array.isArray(step?.content) ? step.content : []) if (c?.type === "text" && c.text) parts.push(c.text);
+  }
+  return parts.join("\n").trim();
+}
+
+async function analysisInteractionStatus(request, env) {
+  try {
+    const missing = await requireGemini(env);
+    if (missing) return missing;
+    const id = new URL(request.url).searchParams.get("id");
+    if (!id || !/^v1_[A-Za-z0-9_-]+$/.test(id)) return json({ error: "interaction_id_required", detail: "شناسه عملیات Gemini معتبر نیست." }, 400);
+    const check = await fetch(`https://generativelanguage.googleapis.com/v1beta/interactions/${encodeURIComponent(id)}`, { headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Api-Revision": "2026-05-20" } });
+    if (!check.ok) return json({ error: "gemini_interaction_status_failed", detail: await safeGoogleError(check) }, check.status || 502);
+    const result = await check.json();
+    const status = String(result?.status || "in_progress").toLowerCase();
+    if (status === "completed") {
+      const text = extractInteractionText(result);
+      if (!text) return json({ error: "gemini_empty_analysis", detail: "Gemini عملیات را کامل کرد اما پاسخ متنی قابل استفاده نداشت." }, 502);
+      let parsed;
+      try { parsed = JSON.parse(text); } catch (_) {
+        const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+        try { parsed = JSON.parse(cleaned); } catch (_) { return json({ error: "gemini_invalid_json", detail: "پاسخ تحلیل ویدئو JSON معتبر نداشت." }, 502); }
+      }
+      const scenes = Array.isArray(parsed.scenes) ? parsed.scenes.slice(0, 40) : [];
+      const facts = Array.isArray(parsed.facts) ? parsed.facts.slice(0, 60) : [];
+      const script = String(parsed.script || "").trim();
+      if (!script) return json({ error: "gemini_no_script", detail: "Gemini تحلیل را انجام داد اما سناریوی صوتی برنگرداند." }, 502);
+      return json({ ok: true, status: "completed", provider: "gemini-video", model: result.model || env.GEMINI_MODEL || "gemini-3.8-flash", summary: String(parsed.summary || ""), facts, scenes, script });
+    }
+    if (["failed", "cancelled"].includes(status)) return json({ error: "gemini_analysis_failed", detail: result?.error?.message || `Gemini عملیات با وضعیت ${status} پایان یافت.`, status }, 502);
+    return json({ ok: true, status, progress: 60 });
+  } catch (e) {
+    return json({ error: "video_analysis_status_exception", detail: String(e?.message || e) }, 500);
   }
 }
 
