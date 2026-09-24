@@ -475,7 +475,7 @@ async function openRouterVideoFallback(request, env) {
   try {
     if (!env.OPENROUTER_API_KEY) return json({ error: "openrouter_missing_api_key", detail: "OpenRouter API Key در Cloudflare تنظیم نشده است." }, 503);
     const b = await request.json();
-    const frames = Array.isArray(b.frames) ? b.frames.filter(x => x && typeof x.data === "string").slice(0, 18) : [];
+    const frames = Array.isArray(b.frames) ? b.frames.filter(x => x && typeof x.data === "string").slice(0, 12) : [];
     if (!frames.length) return json({ error: "video_frames_required", detail: "فریم‌های ویدئو برای موتور جایگزین دریافت نشد." }, 400);
     const brand = String(b.brand || "").trim();
     const description = String(b.description || "").trim();
@@ -502,13 +502,20 @@ The script must follow the observed sequence, explain what viewers actually see,
       content.push({ type: "text", text: `Frame timestamp: ${String(frame.time || "00:00")}` });
       content.push({ type: "image_url", image_url: { url: frame.data } });
     }
+    // Use OpenRouter's server-side model + provider failover in ONE request.
+    // This is more reliable than manually issuing separate requests: if one
+    // free provider/model returns 429/5xx, OpenRouter can move to the next
+    // compatible model/provider without sending the whole multimodal payload
+    // from this Worker again. All listed models accept image input.
     const models = [
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
       "google/gemma-4-26b-a4b-it:free",
       "google/gemma-4-31b-it:free",
+      "allenai/molmo-2-8b:free",
       "openrouter/free"
     ];
-    let last = { status: 503, detail: "OpenRouter هیچ مدل رایگانی پاسخ قابل استفاده نداد." };
-    for (const model of models) {
+    let last = { status: 503, detail: "OpenRouter هیچ مدل رایگان چندرسانه‌ای پاسخ قابل استفاده نداد." };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
@@ -519,10 +526,12 @@ The script must follow the observed sequence, explain what viewers actually see,
             "X-Title": "AD Maker AI"
           },
           body: JSON.stringify({
-            model,
+            model: models[0],
+            models,
             messages: [{ role: "user", content }],
             temperature: 0.2,
-            max_tokens: Math.min(6000, Math.max(1200, targetWords * 3))
+            max_tokens: Math.min(4200, Math.max(900, targetWords * 2)),
+            provider: { allow_fallbacks: true, require_parameters: true }
           })
         });
         const payload = await r.json().catch(() => ({}));
@@ -533,25 +542,34 @@ The script must follow the observed sequence, explain what viewers actually see,
           if (text) {
             let parsed;
             try { parsed = parseJsonObject(text); } catch (_) {
-              last = { status: 502, detail: `مدل ${model} پاسخ JSON معتبر نداد.` };
-              continue;
+              last = { status: 502, detail: `OpenRouter پاسخ JSON معتبر نداد${payload?.model ? ` (${payload.model})` : ""}.` };
+              if (attempt === 0) { await sleep(1200); continue; }
+              break;
             }
             const scenes = Array.isArray(parsed.scenes) ? parsed.scenes.slice(0, 40) : [];
             const facts = Array.isArray(parsed.facts) ? parsed.facts.slice(0, 60) : [];
             const script = String(parsed.script || "").trim();
-            if (!script) { last = { status: 502, detail: `مدل ${model} سناریوی صوتی قابل استفاده برنگرداند.` }; continue; }
-            return json({ ok: true, status: "completed", provider: "openrouter-video-fallback", model: payload?.model || model, summary: String(parsed.summary || ""), facts, scenes, script, framesAnalyzed: frames.length });
+            if (script) return json({ ok: true, status: "completed", provider: "openrouter-video-fallback", model: payload?.model || models[0], summary: String(parsed.summary || ""), facts, scenes, script, framesAnalyzed: frames.length });
+            last = { status: 502, detail: `OpenRouter سناریوی صوتی قابل استفاده برنگرداند${payload?.model ? ` (${payload.model})` : ""}.` };
+          } else {
+            last = { status: 502, detail: `OpenRouter پاسخ متنی قابل استفاده برنگرداند${payload?.model ? ` (${payload.model})` : ""}.` };
           }
+        } else {
+          const err = payload?.error || {};
+          last = { status: r.status || 502, detail: String(err.message || `OpenRouter پاسخ HTTP ${r.status || 502} برگرداند.`) };
+          if ([401, 403, 402].includes(r.status)) break;
         }
-        const err = payload?.error || {};
-        last = { status: r.status || 502, detail: String(err.message || `OpenRouter برای ${model} پاسخ مناسب نداد.`) };
-        if ([401, 403, 402].includes(r.status)) break;
-        if (r.status === 429 || r.status === 503) await sleep(900);
+        if (attempt === 0 && [429, 500, 502, 503, 504].includes(last.status)) {
+          await sleep(last.status === 429 ? 2200 : 1400);
+          continue;
+        }
+        break;
       } catch (e) {
         last = { status: 503, detail: String(e?.message || e) };
+        if (attempt === 0) { await sleep(1400); continue; }
       }
     }
-    return json({ error: "openrouter_video_fallback_failed", detail: last.detail, retryable: [429, 502, 503, 504].includes(last.status) }, last.status || 503);
+    return json({ error: "openrouter_video_fallback_failed", detail: last.detail, retryable: [429, 500, 502, 503, 504].includes(last.status), modelsTried: models }, last.status || 503);
   } catch (e) {
     return json({ error: "openrouter_video_fallback_exception", detail: String(e?.message || e) }, 500);
   }
