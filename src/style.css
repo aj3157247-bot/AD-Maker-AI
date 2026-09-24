@@ -9,3 +9,21 @@ body{overflow-x:hidden}button,input,textarea,select{font:inherit}button{cursor:p
 @media(max-width:1080px){.mobile-workspace{grid-template-columns:1fr 1fr}.result{grid-column:1/-1}.video-stage{height:580px}}
 @media(max-width:760px){.app-shell{padding:8px 9px 28px}.topbar{height:45px;margin-bottom:8px}.brandmark{width:33px;height:33px;border-radius:10px}.brand strong{font-size:13px}.brand span{font-size:7px}.top-badge span{display:none}.top-badge{padding:7px;border-radius:50%}.hero-card{min-height:172px;border-radius:19px;padding:18px 16px;margin-bottom:8px}.hero-card h1{font-size:24px;max-width:260px}.hero-card p{font-size:8px;max-width:260px}.hero-pills{max-width:280px;margin-top:9px}.hero-pills span{font-size:6px;padding:4px 6px}.hero-art{width:37%;opacity:.8}.hero-phone{right:2%;top:25px;width:82px;height:125px;border-width:4px;border-radius:16px}.hero-phone-top{height:6px;width:27px;margin:5px auto}.hero-play{width:29px;height:29px;margin:22px auto 8px;font-size:9px}.hero-lines{padding:0 9px}.hero-lines i{height:3px;margin:5px 0}.mobile-workspace{display:flex;flex-direction:column;gap:8px}.setup,.production,.result{width:100%;padding:11px;border-radius:16px}.setup{order:1}.production{order:2}.result{order:3}.section-head{margin-bottom:9px}.section-head h2{font-size:14px}.style-grid{grid-template-columns:repeat(5,1fr)}.stage-grid{grid-template-columns:repeat(3,1fr)}.video-stage{height:min(72vh,540px)}.script-panel textarea{height:120px}.demo-btn{display:none}.output-actions .primary{font-size:9px}.asset-item{width:43px;height:43px}.drop{padding:11px 8px}}
 @media(max-width:430px){.hero-card{min-height:160px}.hero-card h1{font-size:22px}.hero-card p{font-size:7px}.hero-art{width:34%;opacity:.6}.hero-phone{right:-8px;width:76px;height:116px}.style-grid{grid-template-columns:repeat(3,1fr)}.stage-grid{grid-template-columns:repeat(2,1fr)}.quick-grid{gap:6px}.field textarea{min-height:78px}.video-stage{height:490px}.compact-options{grid-template-columns:1fr auto}}
+
+/* v21: compact output, platform-first workflow, and saved video library */
+.platform-grid{grid-template-columns:repeat(4,1fr)}
+.style-chip span{line-height:1.2}
+.script-panel textarea{height:82px;max-height:none;overflow:auto;transition:height .2s ease}
+.script-panel textarea.expanded{height:260px;overflow:auto}
+.video-stage{height:360px}
+.result .section-head{margin-bottom:7px}
+.result .output-actions{margin-top:6px}
+.library{grid-column:1/-1}
+.video-library{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.library-item{border:1px solid #292f3d;background:#090b10;border-radius:13px;padding:7px;min-width:0}
+.library-item video{display:block;width:100%;aspect-ratio:9/14;object-fit:cover;background:#020305;border-radius:9px}
+.library-info{padding:7px 3px 4px;min-width:0}.library-info strong,.library-info small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.library-info strong{font-size:9px}.library-info small{font-size:7px;color:#6f7787;margin-top:3px}.library-actions{display:grid;grid-template-columns:1fr 1fr;gap:5px}.library-actions button{padding:7px 5px;font-size:8px}
+.library-empty{text-align:center;border:1px dashed #2c3240;border-radius:12px;padding:18px 12px;color:#737b89;grid-column:1/-1}.library-empty div{width:38px;height:38px;display:grid;place-items:center;margin:0 auto 7px;border-radius:11px;background:#171326;color:#bcaeff;font-size:18px}.library-empty strong,.library-empty small{display:block}.library-empty strong{font-size:9px;color:#aeb3bf}.library-empty small{font-size:7px;line-height:1.7;margin-top:4px}
+@media(max-width:760px){.platform-grid{grid-template-columns:repeat(2,1fr)}.video-stage{height:330px}.library{order:4}.video-library{grid-template-columns:repeat(2,minmax(0,1fr))}.library-item video{aspect-ratio:9/14}.script-panel textarea.expanded{height:300px}}
+@media(max-width:430px){.video-stage{height:300px}.video-library{grid-template-columns:1fr 1fr}.library-actions{grid-template-columns:1fr 1fr}.platform-grid .style-chip span{font-size:7px}}
+.video-stage:before{content:""}

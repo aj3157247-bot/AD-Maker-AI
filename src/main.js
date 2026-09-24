@@ -2,8 +2,9 @@ import "./style.css";
 
 const state = {
   assets: [],
-  style: "cinematic",
-  language: "fa",
+  style: "youtube_short",
+  platform: "youtube_short",
+  language: "en",
   duration: 15,
   script: "",
   busy: false,
@@ -98,16 +99,21 @@ function renderShell() {
           <div class="field"><label>درباره محصول یا خدمات <b>*</b></label><textarea id="desc" placeholder="چه چیزی می‌فروشی یا چه خدمتی ارائه می‌کنی؟ مزیت اصلی، مخاطب و راه ارتباطی را بنویس..."></textarea><div class="hint">اگر توضیحات کوتاه باشد، AI آن را متناسب با زمان ویدئو حرفه‌ای‌تر می‌کند.</div></div>
 
           <div class="quick-grid">
-            <div class="field"><label>زبان</label><select id="lang"><option value="fa">دری افغانستان</option><option value="ps">پښتو</option><option value="en">English</option></select></div>
+            <div class="field"><label>زبان تبلیغ</label><select id="lang">
+              <option value="en">English</option><option value="ar">العربية</option><option value="tr">Türkçe</option><option value="ur">اردو</option><option value="hi">हिन्दी</option><option value="fa">فارسی</option><option value="ps">پښتو</option><option value="ru">Русский</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="id">Bahasa Indonesia</option><option value="uz">O‘zbekcha</option>
+            </select></div>
             <div class="field"><label>مدت</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select></div>
           </div>
 
-          <div class="field"><label>سبک تبلیغ</label><div class="style-grid">
-            <button class="style-chip active" data-style="cinematic"><i>🎬</i><span>سینمایی</span></button>
-            <button class="style-chip" data-style="modern"><i>⚡</i><span>مدرن</span></button>
-            <button class="style-chip" data-style="luxury"><i>◆</i><span>لوکس</span></button>
-            <button class="style-chip" data-style="sales"><i>↗</i><span>فروش</span></button>
-            <button class="style-chip" data-style="social"><i>◉</i><span>ریلز</span></button>
+          <div class="field"><label>پلتفرم تبلیغ</label><div class="style-grid platform-grid">
+            <button class="style-chip active" data-style="youtube_short"><i>▶</i><span>YouTube Shorts</span></button>
+            <button class="style-chip" data-style="youtube"><i>▶</i><span>YouTube</span></button>
+            <button class="style-chip" data-style="tiktok"><i>♪</i><span>TikTok</span></button>
+            <button class="style-chip" data-style="instagram_reels"><i>◎</i><span>Instagram Reels</span></button>
+            <button class="style-chip" data-style="facebook"><i>f</i><span>Facebook</span></button>
+            <button class="style-chip" data-style="instagram"><i>◎</i><span>Instagram</span></button>
+            <button class="style-chip" data-style="linkedin"><i>in</i><span>LinkedIn</span></button>
+            <button class="style-chip" data-style="whatsapp"><i>◌</i><span>WhatsApp</span></button>
           </div></div>
 
           <div class="field media-field"><div class="field-title"><label>رسانه‌های تبلیغ</label><span>هر تعداد</span></div><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>برای بهترین نتیجه، همه تصاویر و کلیپ‌های محصولت را انتخاب کن.</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div></div>
@@ -128,17 +134,21 @@ function renderShell() {
             <div id="stageGrid" class="stage-grid">${stages.map((s,i)=>`<div class="pipeline-stage ${i===0?"active":""}" data-stage="${i}"><div class="stage-number">${s[0]}</div><div><b>${s[1]}</b><small>${s[2]}</small></div><span class="stage-check">○</span></div>`).join("")}</div>
           </div>
 
-          <details class="script-details" open><summary><span>📝 سناریوی تبلیغ</span><em>ویرایش</em></summary><div class="script-panel"><div class="panel-title"><span id="scriptSource">منبع: —</span><button id="editScript" class="tiny-btn" disabled>ویرایش</button></div><textarea id="scriptEditor" disabled placeholder="سناریوی تبلیغاتی اینجا قرار می‌گیرد..."></textarea><div class="script-meta"><span id="scriptCount">0 کلمه</span><span>متناسب با زمان ویدئو</span></div></div></details>
+          <details class="script-details"><summary><span>📝 سناریوی تبلیغ</span><em>بیشتر</em></summary><div class="script-panel"><div class="panel-title"><span id="scriptSource">منبع: —</span><div><button id="scriptMore" class="tiny-btn" type="button">بیشتر</button><button id="editScript" class="tiny-btn" disabled>ویرایش</button></div></div><textarea id="scriptEditor" disabled placeholder="سناریوی تبلیغاتی اینجا قرار می‌گیرد..."></textarea><div class="script-meta"><span id="scriptCount">0 کلمه</span><span>برای دیدن کل متن «بیشتر» را بزن</span></div></div></details>
 
           <details class="ops-details"><summary><span>جزئیات عملیات</span><em>نمایش</em></summary><div class="live-log"><div class="log-head"><span>وضعیت ساخت</span><button id="clearLog" class="tiny-btn">پاک کردن</button></div><div id="log" class="log"><div class="log-line muted"><span>●</span> منتظر شروع پروژه...</div></div></div></details>
         </section>
 
         <section class="result card">
           <div class="section-head"><div><small>مرحله ۳</small><h2>پیش‌نمایش و خروجی</h2></div><span id="outputState">آماده ساخت</span></div>
-          <div id="stage" class="video-stage"><div class="empty"><div>✦</div><strong>ویدئوی نهایی اینجا نمایش داده می‌شود</strong><small>خروجی عمودی 9:16 با صدا و زیرنویس</small></div></div>
+          <div id="stage" class="video-stage"><div class="empty"><div>✦</div><strong>ویدئوی نهایی اینجا نمایش داده می‌شود</strong><small id="stageFormat">خروجی 9:16 با صدا و زیرنویس</small></div></div>
           <div class="output-actions"><button id="renderBtn" class="primary" disabled>▶ ساخت ویدئو</button><button id="downloadBtn" class="secondary" disabled>↓ دانلود</button></div>
-          <div class="result-metrics"><div><span>◉</span><b id="voiceState">گویندگی</b><small id="voiceDetail">آماده</small></div><div><span>♫</span><b>موسیقی</b><small id="musicState">اختیاری</small></div><div><span>9:16</span><b>خروجی</b><small>720 × 1280</small></div></div>
           <div id="resultActions" class="result-extra" hidden><button id="rerenderBtn" class="secondary">↻ ساخت دوباره</button><button id="newBtn" class="ghost">＋ پروژه جدید</button></div>
+        </section>
+
+        <section class="library card">
+          <div class="section-head"><div><small>کتابخانه</small><h2>ویدئوهای ساخته‌شده</h2></div><span id="libraryCount">0 ویدئو</span></div>
+          <div id="videoLibrary" class="video-library"><div class="library-empty"><div>▣</div><strong>هنوز ویدئویی ذخیره نشده</strong><small>ویدئوهای ساخته‌شده را اینجا نگه می‌داریم تا بعداً دوباره ببینی، دانلود کنی یا حذف کنی.</small></div></div>
         </section>
       </section>
     </main>
@@ -202,6 +212,92 @@ async function api(path, payload) {
   return r.json();
 }
 
+const LIB_DB = "ad-maker-ai-library";
+const LIB_STORE = "videos";
+const libraryObjectUrls = new Set();
+
+function openLibraryDB() {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error("IndexedDB در این مرورگر فعال نیست."));
+    const req = indexedDB.open(LIB_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(LIB_STORE)) {
+        const store = db.createObjectStore(LIB_STORE, { keyPath: "id" });
+        store.createIndex("createdAt", "createdAt");
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("باز کردن کتابخانه ناموفق بود."));
+  });
+}
+
+async function saveVideoToLibrary(blob, meta = {}) {
+  const db = await openLibraryDB();
+  const record = { id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, blob, createdAt: Date.now(), ...meta };
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(LIB_STORE, "readwrite");
+    tx.objectStore(LIB_STORE).put(record);
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error || new Error("ذخیره ویدئو ناموفق بود."));
+  });
+  db.close();
+  log("ویدئو در «ویدئوهای ساخته‌شده» ذخیره شد.", "success");
+}
+
+async function getLibraryVideos() {
+  const db = await openLibraryDB();
+  const rows = await new Promise((resolve, reject) => {
+    const tx = db.transaction(LIB_STORE, "readonly");
+    const req = tx.objectStore(LIB_STORE).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error || new Error("خواندن کتابخانه ناموفق بود."));
+  });
+  db.close();
+  return rows.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+async function deleteLibraryVideo(id) {
+  const db = await openLibraryDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(LIB_STORE, "readwrite");
+    tx.objectStore(LIB_STORE).delete(id);
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error || new Error("حذف ویدئو ناموفق بود."));
+  });
+  db.close();
+  await renderVideoLibrary();
+}
+
+async function renderVideoLibrary() {
+  const wrap = $("#videoLibrary"); if (!wrap) return;
+  libraryObjectUrls.forEach(u => URL.revokeObjectURL(u)); libraryObjectUrls.clear();
+  try {
+    const rows = await getLibraryVideos();
+    $("#libraryCount").textContent = `${rows.length} ویدئو`;
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="library-empty"><div>▣</div><strong>هنوز ویدئویی ذخیره نشده</strong><small>ویدئوهای ساخته‌شده را اینجا نگه می‌داریم تا بعداً دوباره ببینی، دانلود کنی یا حذف کنی.</small></div>`;
+      return;
+    }
+    wrap.innerHTML = rows.map(v => `<article class="library-item" data-id="${escapeHtml(v.id)}"><video playsinline muted preload="metadata"></video><div class="library-info"><strong>${escapeHtml(v.brand || "تبلیغ جدید")}</strong><small>${escapeHtml(platformLabel(v.platform))} · ${escapeHtml(languageLabel(v.language))} · ${new Date(v.createdAt).toLocaleDateString()}</small></div><div class="library-actions"><button class="secondary library-download" type="button">دانلود</button><button class="ghost library-delete" type="button">حذف</button></div></article>`).join("");
+    rows.forEach(v => {
+      const item = [...wrap.querySelectorAll(".library-item")].find(x => x.dataset.id === v.id); if (!item) return;
+      const url = URL.createObjectURL(v.blob); libraryObjectUrls.add(url); item.querySelector("video").src = url;
+      item.querySelector(".library-download").onclick = () => downloadBlob(v.blob, `ad-maker-ai-${v.id}.webm`);
+      item.querySelector(".library-delete").onclick = async () => { if (confirm("این ویدئو از کتابخانه حذف شود؟")) await deleteLibraryVideo(v.id); };
+    });
+  } catch (e) {
+    $("#libraryCount").textContent = "در دسترس نیست";
+    wrap.innerHTML = `<div class="library-empty"><strong>کتابخانه مرورگر در دسترس نیست</strong><small>${escapeHtml(e.message || String(e))}</small></div>`;
+  }
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = filename; a.rel = "noopener"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function languageLabel(code) { return ({en:"English",ar:"العربية",tr:"Türkçe",ur:"اردو",hi:"हिन्दी",fa:"فارسی",ps:"پښتو",ru:"Русский",es:"Español",fr:"Français",de:"Deutsch",id:"Bahasa Indonesia",uz:"O‘zbekcha"})[code] || code || "—"; }
+function platformLabel(code) { return ({youtube_short:"YouTube Shorts",youtube:"YouTube",tiktok:"TikTok",instagram_reels:"Instagram Reels",facebook:"Facebook",instagram:"Instagram",linkedin:"LinkedIn",whatsapp:"WhatsApp"})[code] || "تبلیغ"; }
+function outputRatio(code) { return ({youtube:"16:9",instagram:"1:1",facebook:"4:5",linkedin:"1:1",youtube_short:"9:16",tiktok:"9:16",instagram_reels:"9:16",whatsapp:"9:16"})[code] || "9:16"; }
+
 function fallbackScript(brand, desc) {
   if (state.language === "en") return `${brand}. ${desc}. Discover a simpler way to get what you need. Try ${brand} today and take the next step.`;
   if (state.language === "ps") return `${brand}. ${desc}. د خپلو اړتیاوو لپاره اسانه لاره پیدا کړئ. ${brand} همدا اوس تجربه کړئ او خپل بل ګام واخلئ.`;
@@ -225,14 +321,15 @@ function assetPreview() {
 $("#files").onchange = e => {
   state.assets = [...e.target.files];
   assetPreview();
+renderVideoLibrary();
   log(`${state.assets.length} فایل انتخاب شد؛ فرمت هر فایل هنگام ساخت به‌صورت خودکار بررسی و در صورت نیاز تبدیل می‌شود.`, "success");
 };
-$("#music").onchange = e => { const f = e.target.files[0]; $("#musicName").textContent = f ? f.name : "هنوز موسیقی انتخاب نشده"; $("#musicState").textContent = f ? "افزوده شد" : "اختیاری"; };
+$("#music").onchange = e => { const f = e.target.files[0]; $("#musicName").textContent = f ? f.name : "اختیاری"; };
 $("#lang").onchange = e => { state.language = e.target.value; setDir(); $("#brand").placeholder = t("brandPlaceholder"); $("#desc").placeholder = t("descPlaceholder"); };
 $("#duration").onchange = e => state.duration = +e.target.value;
 $("#brandColor").oninput = e => { state.brandColor = e.target.value; $("#colorHex").textContent = e.target.value.toUpperCase(); document.documentElement.style.setProperty("--brand", e.target.value); };
 
-$$(".style-chip").forEach(btn => btn.onclick = () => { $$(".style-chip").forEach(x => x.classList.remove("active")); btn.classList.add("active"); state.style = btn.dataset.style; });
+$(".style-chip").forEach(btn => btn.onclick = () => { $(".style-chip").forEach(x => x.classList.remove("active")); btn.classList.add("active"); state.style = btn.dataset.style; state.platform = btn.dataset.style; $("#stageFormat").textContent = `خروجی ${outputRatio(state.platform)} با صدا و زیرنویس`; });
 
 $("#demoBtn").onclick = () => {
   $("#brand").value = "بازارک";
@@ -300,7 +397,7 @@ $("#scriptBtn").onclick = async () => {
 };
 
 async function getVoice() {
-  $("#voiceState").textContent = "در حال ساخت";
+  if ($("#voiceState")) $("#voiceState").textContent = "در حال ساخت";
   $("#voiceDetail").textContent = "ElevenLabs v3";
   state.voiceBlob = null;
   state.voiceMode = "none";
@@ -320,8 +417,8 @@ async function getVoice() {
     if (blob?.size) {
       state.voiceBlob = blob;
       state.voiceMode = "elevenlabs";
-      $("#voiceState").textContent = "گویندگی AI";
-      $("#voiceDetail").textContent = `${j.model === "eleven_v3" ? "Eleven v3" : "Eleven Multilingual v2"} · ${state.language === "ps" ? "پښتو" : state.language === "en" ? "English" : "دری"} ✓`;
+      if ($("#voiceState")) $("#voiceState").textContent = "گویندگی AI";
+      if ($("#voiceDetail")) $("#voiceDetail").textContent = `${j.model === "eleven_v3" ? "Eleven v3" : "Eleven Multilingual v2"} · ${languageLabel(state.language)} ✓`;
       log(`گویندگی با موفقیت آماده شد${j.chunks > 1 ? ` (${j.chunks} بخش)` : ""}.`, "success");
       return blob;
     }
@@ -342,8 +439,8 @@ async function getVoice() {
     } catch (_) {}
     log(`گویندگی ساخته نشد: ${detail}`, "error");
   }
-  $("#voiceState").textContent = "گویندگی آماده نیست";
-  $("#voiceDetail").textContent = "خروجی بی‌صدا مجاز نیست";
+  if ($("#voiceState")) $("#voiceState").textContent = "گویندگی آماده نیست";
+  if ($("#voiceDetail")) $("#voiceDetail").textContent = "خروجی بی‌صدا مجاز نیست";
   return null;
 }
 
@@ -416,6 +513,8 @@ $("#renderBtn").onclick = async () => {
   try {
     setStage(4); setProgress(66, "رندر ویدئو", t("render")); log("رندر فریم‌ها شروع شد.");
     state.lastVideo = await renderVideo(state.voiceBlob);
+    await saveVideoToLibrary(state.lastVideo, { brand: brandText(), platform: state.platform, language: state.language, duration: Math.round(state.duration) }).catch(e => log(`ذخیره در کتابخانه انجام نشد: ${e.message || e}`, "info"));
+    await renderVideoLibrary();
     const previewUrl = URL.createObjectURL(state.lastVideo);
     $("#stage").innerHTML = `<video class="final-preview" controls playsinline preload="metadata"></video>`;
     const preview = $("#stage video");
@@ -454,7 +553,8 @@ $("#rerenderBtn").onclick = () => $("#renderBtn").click();
 $("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.voiceBlob = null; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#scriptEditor").disabled = true; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
 $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line muted"><span>●</span> منتظر عملیات بعدی...</div>`; };
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
-$("#scriptEditor").oninput = e => { state.script = e.target.value; state.voiceBlob = null; state.generated = false; $("#renderBtn").disabled = true; updateScriptMeta(state.script, "ویرایش کاربر"); log("متن سناریو تغییر کرد؛ برای جلوگیری از صدای قدیمی، گویندگی باید دوباره ساخته شود.", "info"); };
+$("#scriptMore").onclick = () => { const box = $("#scriptEditor"); const details = $(".script-details"); details.open = true; box.classList.toggle("expanded"); $("#scriptMore").textContent = box.classList.contains("expanded") ? "کمتر" : "بیشتر"; if (box.classList.contains("expanded")) { box.style.height = "auto"; box.style.height = `${Math.max(180, box.scrollHeight)}px`; } else box.style.height = "82px"; };
+$("#scriptEditor").oninput = e => { if (e.target.classList.contains("expanded")) { e.target.style.height = "auto"; e.target.style.height = `${e.target.scrollHeight}px`; } state.script = e.target.value; state.voiceBlob = null; state.generated = false; $("#renderBtn").disabled = true; updateScriptMeta(state.script, "ویرایش کاربر"); log("متن سناریو تغییر کرد؛ برای جلوگیری از صدای قدیمی، گویندگی باید دوباره ساخته شود.", "info"); };
 $("#helpBtn").onclick = () => alert("۱) اطلاعات محصول را وارد کن\n۲) عکس/ویدئو اضافه کن\n۳) ساخت تبلیغ با AI را بزن\n۴) پس از آماده‌شدن سناریو و صدا، ساخت ویدئو را بزن\n۵) در پایان دانلود کن.");
 
 function targetWordsForDuration(seconds) {
@@ -469,7 +569,9 @@ function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function renderVideo(voiceBlob) {
   if (!voiceBlob || !voiceBlob.size) throw new Error("گویندگی صوتی آماده نیست؛ ابتدا گویندگی AI را با موفقیت بساز.");
-  const W = 720, H = 1280;
+  const ratio = outputRatio(state.platform);
+  const W = ratio === "16:9" ? 1280 : ratio === "1:1" ? 1080 : ratio === "4:5" ? 1080 : 720;
+  const H = ratio === "16:9" ? 720 : ratio === "1:1" ? 1080 : ratio === "4:5" ? 1350 : 1280;
   const canvas = document.createElement("canvas");
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -718,7 +820,7 @@ function roundRect(ctx, x, y, w, h, r, fill, stroke) {
 
 function brandText() { return $("#brand")?.value?.trim() || "AD Maker AI"; }
 function styleLabel() {
-  return ({ cinematic: "CINEMATIC", modern: "MODERN", luxury: "PREMIUM", sales: "SMART SELLING", social: "SOCIAL" })[state.style] || "AD MAKER AI";
+  return platformLabel(state.platform).toUpperCase();
 }
 
 function safeExt(name, fallback = "bin") {
@@ -989,3 +1091,4 @@ function hexAlpha(hex,a){const h=hex.replace("#",""); const r=parseInt(h.slice(0
 function wrap(ctx,text,x,y,maxWidth,lineH,maxLines){const words=text.split(/\s+/),lines=[];let line="";for(const w of words){const test=line?`${line} ${w}`:w;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=w}else line=test}if(line)lines.push(line);lines.slice(0,maxLines).forEach((l,i)=>ctx.fillText(l,x,y+i*lineH));}
 
 assetPreview();
+renderVideoLibrary();
