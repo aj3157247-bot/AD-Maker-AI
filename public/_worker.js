@@ -2,13 +2,156 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "2.7.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "2.8.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
+    if (url.pathname === "/api/analyze-video" && request.method === "POST") return analyzeVideo(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
     return env.ASSETS.fetch(request);
   }
 };
+
+async function analyzeVideo(request, env) {
+  try {
+    if (!env.GEMINI_API_KEY) {
+      return json({ error: "gemini_missing_api_key", detail: "برای تحلیل مستقیم ویدئو باید Secret با نام GEMINI_API_KEY را در Cloudflare اضافه کنی." }, 503);
+    }
+
+    const form = await request.formData();
+    const file = form.get("video");
+    if (!(file instanceof File)) return json({ error: "video_required", detail: "فایل ویدئو دریافت نشد." }, 400);
+
+    const brand = String(form.get("brand") || "").trim();
+    const description = String(form.get("description") || "").trim();
+    const language = String(form.get("language") || "fa").toLowerCase();
+    const duration = Math.max(15, Math.min(300, Number(form.get("duration")) || 60));
+    const platform = String(form.get("platform") || "YouTube Shorts");
+    const mime = String(file.type || "video/mp4");
+    const size = Number(file.size || 0);
+    if (!size) return json({ error: "empty_video", detail: "فایل ویدئو خالی است." }, 400);
+    if (size > 100 * 1024 * 1024) return json({ error: "video_too_large", detail: "برای این مسیر، حجم ویدئو را زیر 100MB نگه دار." }, 413);
+
+    // Upload the video to Gemini Files API without exposing the Gemini key to the browser.
+    const start = await fetch("https://generativelanguage.googleapis.com/upload/v1beta/files", {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": env.GEMINI_API_KEY,
+        "X-Goog-Upload-Protocol": "resumable",
+        "X-Goog-Upload-Command": "start",
+        "X-Goog-Upload-Header-Content-Length": String(size),
+        "X-Goog-Upload-Header-Content-Type": mime,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ file: { display_name: file.name || `ad-maker-video-${Date.now()}` } })
+    });
+    if (!start.ok) {
+      const detail = await safeGoogleError(start);
+      return json({ error: "gemini_upload_start_failed", detail }, start.status || 502);
+    }
+    const uploadUrl = start.headers.get("x-goog-upload-url");
+    if (!uploadUrl) return json({ error: "gemini_upload_url_missing", detail: "Gemini آدرس آپلود ویدئو را برنگرداند." }, 502);
+
+    const upload = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        "Content-Length": String(size),
+        "X-Goog-Upload-Offset": "0",
+        "X-Goog-Upload-Command": "upload, finalize",
+        "Content-Type": mime
+      },
+      body: file.stream()
+    });
+    if (!upload.ok) {
+      const detail = await safeGoogleError(upload);
+      return json({ error: "gemini_upload_failed", detail }, upload.status || 502);
+    }
+    const uploaded = await upload.json();
+    const fileName = uploaded?.file?.name;
+    const fileUri = uploaded?.file?.uri;
+    if (!fileName || !fileUri) return json({ error: "gemini_file_missing", detail: "Gemini فایل ویدئو را ثبت نکرد." }, 502);
+
+    let fileInfo = uploaded.file;
+    for (let i = 0; i < 36; i++) {
+      const state = String(fileInfo?.state || "").toUpperCase();
+      if (state === "ACTIVE") break;
+      if (state === "FAILED") return json({ error: "gemini_video_processing_failed", detail: "Gemini نتوانست ویدئو را پردازش کند." }, 502);
+      await new Promise(r => setTimeout(r, 2500));
+      const check = await fetch(`https://generativelanguage.googleapis.com/v1beta/${fileName}`, { headers: { "x-goog-api-key": env.GEMINI_API_KEY } });
+      if (!check.ok) {
+        const detail = await safeGoogleError(check);
+        return json({ error: "gemini_file_status_failed", detail }, check.status || 502);
+      }
+      fileInfo = await check.json();
+    }
+    if (String(fileInfo?.state || "").toUpperCase() !== "ACTIVE") {
+      return json({ error: "gemini_video_processing_timeout", detail: "پردازش ویدئو در Gemini طولانی شد؛ یک ویدئوی کوتاه‌تر امتحان کن." }, 504);
+    }
+
+    const langName = { en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian", ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" }[language] || "Persian";
+    const targetWords = Math.max(35, Math.min(900, Math.round(duration * 2.2)));
+    const prompt = `Analyze this product/site demonstration video for AD Maker AI. The video may show a website or app such as a marketplace. Identify what is visibly demonstrated, in order, with approximate timestamps. Read visible UI text when possible. Do not invent features that are not shown or stated.
+
+Brand: ${brand || "Unknown"}
+User description: ${description || "None provided"}
+Platform: ${platform}
+Output language: ${langName}
+Target advertisement duration: ${duration} seconds
+Target voice-over length: about ${targetWords} words.
+
+Return ONLY valid JSON with this exact shape:
+{
+  "summary": "short factual summary",
+  "facts": ["only verified facts from the video or user description"],
+  "scenes": [
+    {"start":"00:00","end":"00:08","title":"short title","description":"what is visibly happening"}
+  ],
+  "script": "complete professional voice-over in the requested language"
+}
+
+For the script: narrate the actual sequence of the video so the voice matches what viewers see. Use a strong opening, explain the demonstrated features in order, add transitions, and finish with a call to action. Never invent prices, discounts, statistics, ratings, guarantees, users, locations, or features. If a feature is uncertain, omit it. Return only the JSON object.`;
+
+    const model = env.GEMINI_MODEL || "gemini-3.8-flash";
+    const gen = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { file_data: { mime_type: mime, file_uri: fileUri } },
+          { text: prompt }
+        ] }],
+        generationConfig: { temperature: 0.35, responseMimeType: "application/json" }
+      })
+    });
+    if (!gen.ok) {
+      const detail = await safeGoogleError(gen);
+      return json({ error: "gemini_analysis_failed", detail, model }, gen.status || 502);
+    }
+    const result = await gen.json();
+    const text = result?.candidates?.[0]?.content?.parts?.map(p => p?.text || "").join(" ").trim();
+    if (!text) return json({ error: "gemini_empty_analysis", detail: "Gemini پاسخ تحلیلی قابل استفاده برنگرداند." }, 502);
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_) {
+      const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+      try { parsed = JSON.parse(cleaned); } catch (_) { return json({ error: "gemini_invalid_json", detail: "پاسخ تحلیل ویدئو ساختار JSON معتبر نداشت." }, 502); }
+    }
+    const scenes = Array.isArray(parsed.scenes) ? parsed.scenes.slice(0, 40) : [];
+    const facts = Array.isArray(parsed.facts) ? parsed.facts.slice(0, 60) : [];
+    const script = String(parsed.script || "").trim();
+    if (!script) return json({ error: "gemini_no_script", detail: "Gemini تحلیل را انجام داد اما سناریوی صوتی برنگرداند." }, 502);
+    return json({ ok: true, provider: "gemini-video", model, summary: String(parsed.summary || ""), facts, scenes, script, videoName: file.name || "video" });
+  } catch (e) {
+    return json({ error: "video_analysis_exception", detail: String(e?.message || e) }, 500);
+  }
+}
+
+async function safeGoogleError(response) {
+  try {
+    const j = await response.clone().json();
+    return j?.error?.message || j?.message || `Google API HTTP ${response.status}`;
+  } catch (_) {
+    try { return (await response.clone().text()).slice(0, 600) || `Google API HTTP ${response.status}`; } catch (_) { return `Google API HTTP ${response.status}`; }
+  }
+}
 
 async function generateScript(request, env) {
   try {
@@ -24,6 +167,10 @@ async function generateScript(request, env) {
     const customScript = String(b.customScript || "").trim();
     const modeInstruction = scriptMode === "hybrid" && customScript
       ? `\nThe user also supplied a draft script below. Preserve its meaning and factual claims, but professionally rewrite and expand it to fit the target duration. Improve the hook, flow, benefits, transitions and call to action without inventing unsupported facts.\n\nUser draft script:\n${customScript}`
+      : "";
+    const videoAnalysis = b.videoAnalysis || null;
+    const videoInstruction = videoAnalysis
+      ? `\nIMPORTANT: A demonstration video was analyzed. The voice-over MUST follow what is actually shown in the video. Use the scene order and verified facts below. Do not invent anything not supported by the video or user description.\n\nVideo summary:\n${String(videoAnalysis.summary || "")}\n\nVerified facts:\n${Array.isArray(videoAnalysis.facts) ? videoAnalysis.facts.join("\n- ") : ""}\n\nVideo scenes:\n${Array.isArray(videoAnalysis.scenes) ? videoAnalysis.scenes.map(s => `${s.start || ""}-${s.end || ""}: ${s.title || ""}. ${s.description || ""}`).join("\n") : ""}\n\nVideo analyzer draft:\n${String(videoAnalysis.recommendedScript || "")}`
       : "";
 
     const prompt = `You are an expert advertising copywriter creating a complete voice-over for an Afghanistan-focused product advertisement.
@@ -45,7 +192,7 @@ Requirements:
 - Build a clear opening hook, explanation, benefits, practical value, and ending call to action.
 - The script should be coherent from beginning to end and should not repeat the same sentence just to increase length.
 - Aim for approximately ${targetWords} words (within about 15% if possible).
-- The selected duration is the priority: do not return a short 15–30 second script for a multi-minute request.${modeInstruction}`;
+- The selected duration is the priority: do not return a short 15–30 second script for a multi-minute request.${modeInstruction}${videoInstruction}`;
 
     if (env.OPENROUTER_API_KEY) {
       let script = await openRouterScript(env.OPENROUTER_API_KEY, prompt, request);
