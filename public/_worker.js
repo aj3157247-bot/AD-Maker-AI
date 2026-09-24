@@ -51,18 +51,35 @@ Rules:
 async function tts(request,env){
  try{
   const b=await request.json();
-  if(!b.text)return json({error:"text_required"},400);
-  if(!env.ELEVENLABS_API_KEY)return json({audio:null,fallback:true});
+  if(!b.text)return json({audio:null,error:"text_required"},400);
+  if(!env.ELEVENLABS_API_KEY)return json({audio:null,error:"elevenlabs_key_missing"},503);
+
   const voice=env.ELEVENLABS_VOICE_ID||"21m00Tcm4TlvDq8ikWAM";
+  const languageCode=b.language==="ps"?"ps":b.language==="en"?"en":"fa";
+
+  // Use Eleven v3: unlike multilingual v2, v3 supports Persian and Pashto.
   const r=await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`,{
    method:"POST",
    headers:{"xi-api-key":env.ELEVENLABS_API_KEY,"Content-Type":"application/json","Accept":"audio/mpeg"},
-   body:JSON.stringify({text:b.text,model_id:"eleven_multilingual_v2",voice_settings:{stability:.42,similarity_boost:.78,style:.25,use_speaker_boost:true}})
+   body:JSON.stringify({
+    text:b.text,
+    model_id:"eleven_v3",
+    language_code:languageCode
+   })
   });
-  if(!r.ok)return json({audio:null,fallback:true});
+
+  if(!r.ok){
+   let detail="";
+   try{ detail=(await r.text()).slice(0,500); }catch(_){}
+   return json({audio:null,error:"elevenlabs_tts_failed",status:r.status,detail},502);
+  }
+
   const buf=await r.arrayBuffer();
-  return json({audio:arrayBufferToBase64(buf),mime:"audio/mpeg",fallback:false});
- }catch(e){return json({audio:null,fallback:true})}
+  if(!buf.byteLength)return json({audio:null,error:"empty_audio"},502);
+  return json({audio:arrayBufferToBase64(buf),mime:r.headers.get("content-type")||"audio/mpeg",fallback:false,model:"eleven_v3",language:languageCode});
+ }catch(e){
+  return json({audio:null,error:"tts_request_failed",detail:String(e?.message||e)},502);
+ }
 }
 function arrayBufferToBase64(buf){let s="",a=new Uint8Array(buf);const chunk=0x8000;for(let i=0;i<a.length;i+=chunk)s+=String.fromCharCode(...a.subarray(i,i+chunk));return btoa(s)}
 function fallback(b){
