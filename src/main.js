@@ -407,7 +407,7 @@ async function analyzeUploadedVideo() {
     const size = Number(video.size || 0);
     if (!size) throw new Error("حجم ویدئو معتبر نیست.");
     const mimeType = String(video.type || "video/mp4");
-    const chunkSize = 1024 * 1024;
+    const chunkSize = 8 * 1024 * 1024;
     setProgress(12, "ایجاد نشست آپلود", "آپلود پایدار ویدئو به‌صورت قطعه‌ای شروع می‌شود…");
     log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ آپلود قطعه‌ای فعال شد.`);
 
@@ -418,18 +418,19 @@ async function analyzeUploadedVideo() {
     }, 45000);
 
     let uploadUrl = session.uploadUrl;
+    const actualChunkSize = Number(session.chunkSize) || chunkSize;
     let offset = 0;
     let chunkIndex = 0;
-    const totalChunks = Math.ceil(size / chunkSize);
+    const totalChunks = Math.ceil(size / actualChunkSize);
 
     while (offset < size) {
-      const end = Math.min(size, offset + chunkSize);
+      const end = Math.min(size, offset + actualChunkSize);
       const chunk = video.slice(offset, end);
       const isFinal = end >= size;
       chunkIndex += 1;
       const percent = 15 + Math.round((end / size) * 35);
       setProgress(percent, "ارسال ویدئو", `قطعه ${chunkIndex} از ${totalChunks} به Gemini ارسال می‌شود…`);
-      if (chunkIndex === 1) log("مرحله ۱: ارسال قطعه‌ای و قابل‌اعتماد ویدئو به Gemini…");
+      if (chunkIndex === 1) log(`مرحله ۱: ارسال قطعه‌ای و قابل‌اعتماد ویدئو به Gemini؛ اندازه هر قطعه ${(actualChunkSize / 1024 / 1024).toFixed(0)}MB است…`);
 
       let attempts = 0;
       while (true) {
