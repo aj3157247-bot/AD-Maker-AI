@@ -1,56 +1,77 @@
-# AdForge AI
 
-سایت ساخت ویدئوی تبلیغاتی کوتاه با رابط فارسی، تولید سناریو با AI و رندر ویدئو در مرورگر.
+# AD Maker AI — Final
 
-## اجرا روی کامپیوتر
+نسخه کامل و آماده Deploy روی Cloudflare Pages.
 
-نیازمندی: Node.js 20 یا جدیدتر
+## امکانات
+- رابط حرفه‌ای و ریسپانسیو
+- دری افغانستان، پشتو و انگلیسی
+- تولید سناریو با OpenRouter
+- fallback به Cloudflare Workers AI در صورت تنظیم binding
+- fallback داخلی بدون API
+- تولید صدای حرفه‌ای با ElevenLabs در صورت تنظیم Secret
+- پشتیبانی از آپلود عکس، ویدئو و موسیقی
+- رندر ویدئو در مرورگر با MediaRecorder
+- ترکیب صدای گوینده و موسیقی
+- خروجی عمودی 720×1280 مناسب Reels/Shorts/TikTok
+- دانلود مستقیم WebM
+- نمونه آماده بازارک
+- API health
 
-```bash
-npm install
-npm run dev
-```
+## Deploy با GitHub + Cloudflare Pages
 
-سپس آدرس نمایش‌داده‌شده توسط Vite را باز کنید.
+Cloudflare Dashboard → Workers & Pages → Create application → Pages → Connect to Git.
 
-## ساخت برای انتشار
+Build command:
+`npm run build`
 
-```bash
-npm run build
-```
+Build output:
+`dist`
 
-پوشه `dist` خروجی نهایی است.
+Production branch:
+`main`
 
-## انتشار روی Cloudflare Pages
+## مهم: Advanced Mode
 
-1. این پروژه را در GitHub قرار دهید.
-2. در Cloudflare Pages یک پروژه بسازید و GitHub را متصل کنید.
-3. Build command:
-   `npm run build`
-4. Build output directory:
-   `dist`
-5. اگر از `_worker.js` استفاده می‌کنید، آن را مطابق حالت Advanced/Workers پروژه Cloudflare خودتان قرار دهید.
+فایل `public/_worker.js` باید در خروجی `dist` کپی شود. Vite این کار را خودکار انجام می‌دهد چون فایل داخل `public` است.
 
-## اتصال هوش مصنوعی
+در نتیجه Worker در مسیر:
+`dist/_worker.js`
+قرار خواهد گرفت.
 
-بدون API Key هم برنامه با سناریوی داخلی کار می‌کند.
+## Secrets
 
-برای تولید سناریوی بهتر:
-- در Cloudflare یک Secret با نام `OPENROUTER_API_KEY` بسازید.
-- Worker از OpenRouter استفاده می‌کند.
-- کلید را هرگز داخل `src/main.js` قرار ندهید.
+در Cloudflare Pages → Settings → Variables and Secrets این Secrets را اضافه کنید:
 
-## قابلیت‌های فعلی
+`OPENROUTER_API_KEY`
+برای تولید سناریوی هوشمند.
 
-- فارسی/دری، پشتو و انگلیسی
-- انتخاب سبک تبلیغ
-- انتخاب مدت
-- آپلود عکس و ویدئو
-- ساخت سناریو از API یا fallback داخلی
-- پیش‌نمایش و رندر ویدئوی WebM در مرورگر
-- دانلود خروجی
-- طراحی واکنش‌گرا و مناسب موبایل
+`ELEVENLABS_API_KEY`
+برای صدای گوینده حرفه‌ای.
 
-## نکته مهم درباره نسخه فعلی
+`ELEVENLABS_VOICE_ID`
+اختیاری؛ اگر خالی باشد از Voice ID پیش‌فرض استفاده می‌شود.
 
-رندر فعلی کاملاً سمت مرورگر است و برای شروع، خروجی WebM می‌دهد. برای یک سرویس تجاری سطح بالاتر، می‌توان بعداً FFmpeg/MediaConvert و سرویس‌های حرفه‌ای TTS/Video AI را پشت Worker اضافه کرد؛ این کار نیازمند API و هزینه سرویس‌های مربوطه است.
+هر Secret را برای Production تنظیم کنید و بعد Redeploy بزنید.
+
+## Workers AI اختیاری
+
+می‌توانید در:
+Workers & Pages → پروژه → Settings → Bindings → Add → Workers AI
+
+یک binding با نام:
+`AI`
+
+اضافه کنید و سپس Redeploy کنید. Cloudflare Pages Functions/Advanced Mode از bindingهای Workers AI پشتیبانی می‌کند.
+
+## تست
+
+بعد از Deploy:
+`https://YOUR-PROJECT.pages.dev/api/health`
+
+باید JSON مشابه زیر بدهد:
+`{"ok":true,"service":"AD Maker AI","version":"2.0.0"}`
+
+## نکته
+
+این نسخه یک استودیوی تبلیغاتی واقعیِ مرورگری است و تولید متن/گوینده را از APIهای اختیاری انجام می‌دهد. تولید ویدئوی مولد سینمایی از متن مثل مدل‌های text-to-video یک قابلیت جداگانه و وابسته به API سرویس و هزینه آن سرویس است؛ این نسخه بدون وابستگی اجباری به چنین سرویس‌هایی قابل استفاده است.
