@@ -59,11 +59,11 @@ function setDir() {
 
 function renderShell() {
   const stages = [
-    ["01", "اطلاعات", "شروع پروژه"],
-    ["02", "سناریو", "متن هوشمند"],
-    ["03", "گویندگی", "صدای AI"],
-    ["04", "صحنه‌ها", "رسانه‌ها"],
-    ["05", "رندر", "ساخت ویدئو"],
+    ["01", "اطلاعات", "شروع"],
+    ["02", "سناریو", "AI"],
+    ["03", "گویندگی", "صدا"],
+    ["04", "صحنه‌ها", "رسانه"],
+    ["05", "رندر", "ویدئو"],
     ["06", "آماده", "خروجی"]
   ];
   $("#app").innerHTML = `
@@ -71,69 +71,70 @@ function renderShell() {
     <header class="topbar">
       <div class="brand">
         <div class="brandmark">✦</div>
-        <div><strong>AD Maker AI</strong><span>استودیوی حرفه‌ای ساخت تبلیغ</span></div>
+        <div><strong>AD Maker AI</strong><span>استودیوی ساخت تبلیغ</span></div>
       </div>
       <div class="top-actions">
-        <span class="status-pill"><i></i> آماده ساخت</span>
+        <div class="top-badge"><i></i><span>AI آماده است</span></div>
         <button id="helpBtn" class="icon-btn" aria-label="راهنما">?</button>
       </div>
     </header>
 
     <main>
-      <section class="intro-row">
-        <div>
+      <section class="hero-card">
+        <div class="hero-copy">
           <div class="eyebrow">AI AD STUDIO</div>
-          <h1>تبلیغ حرفه‌ای، <span>ساده و سریع.</span></h1>
-          <p>اطلاعات محصول و رسانه‌ها را بده؛ سناریو، گویندگی و ویدئوی عمودی را یک‌جا بساز.</p>
+          <h1>تبلیغت را <span>حرفه‌ای بساز.</span></h1>
+          <p>محصولت را معرفی کن، رسانه‌ها را اضافه کن و بقیه را به AI بسپار.</p>
+          <div class="hero-pills"><span>🎙 گویندگی AI</span><span>✦ سناریوی هوشمند</span><span>▣ خروجی 9:16</span></div>
         </div>
-        <div class="intro-mini"><b>9:16</b><span>Reels · Shorts · Stories</span></div>
+        <div class="hero-art" aria-hidden="true"><div class="hero-phone"><div class="hero-phone-top"></div><div class="hero-play">▶</div><div class="hero-lines"><i></i><i></i><i></i></div></div><div class="glow g1"></div><div class="glow g2"></div></div>
       </section>
 
-      <section class="workspace">
-        <aside class="setup card">
-          <div class="section-head"><div><small>شروع</small><h2>ساخت تبلیغ</h2></div><span class="step-state">۱ از ۳</span></div>
+      <section class="mobile-workspace">
+        <section class="setup card">
+          <div class="section-head"><div><small>مرحله ۱</small><h2>اطلاعات تبلیغ</h2></div><span class="step-state">شروع سریع</span></div>
 
-          <div class="field"><label>نام برند یا محصول <b>*</b></label><input id="brand" class="input" placeholder="${t("brandPlaceholder")}"></div>
-          <div class="field"><label>توضیحات <b>*</b></label><textarea id="desc" placeholder="${t("descPlaceholder")}"></textarea><div class="hint">اگر توضیحات کوتاه باشد، AI متن تبلیغ را متناسب با زمان انتخاب‌شده کامل می‌کند.</div></div>
+          <div class="field"><label>نام برند یا محصول <b>*</b></label><input id="brand" class="input" placeholder="مثلاً: بازارک"></div>
+          <div class="field"><label>درباره محصول یا خدمات <b>*</b></label><textarea id="desc" placeholder="چه چیزی می‌فروشی یا چه خدمتی ارائه می‌کنی؟ مزیت اصلی، مخاطب و راه ارتباطی را بنویس..."></textarea><div class="hint">اگر توضیحات کوتاه باشد، AI آن را متناسب با زمان ویدئو حرفه‌ای‌تر می‌کند.</div></div>
 
-          <div class="grid-2">
+          <div class="quick-grid">
             <div class="field"><label>زبان</label><select id="lang"><option value="fa">دری افغانستان</option><option value="ps">پښتو</option><option value="en">English</option></select></div>
-            <div class="field"><label>مدت ویدئو</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select></div>
+            <div class="field"><label>مدت</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select></div>
           </div>
 
-          <div class="field"><label>سبک</label><div class="style-grid">
-            <button class="style-chip active" data-style="cinematic"><i>🎬</i><span>سینمایی</span><small>پویا</small></button>
-            <button class="style-chip" data-style="modern"><i>⚡</i><span>مدرن</span><small>تمیز</small></button>
-            <button class="style-chip" data-style="luxury"><i>◆</i><span>لوکس</span><small>پریمیوم</small></button>
-            <button class="style-chip" data-style="sales"><i>↗</i><span>فروش</span><small>CTA</small></button>
-            <button class="style-chip" data-style="social"><i>◉</i><span>ریلز</span><small>سریع</small></button>
+          <div class="field"><label>سبک تبلیغ</label><div class="style-grid">
+            <button class="style-chip active" data-style="cinematic"><i>🎬</i><span>سینمایی</span></button>
+            <button class="style-chip" data-style="modern"><i>⚡</i><span>مدرن</span></button>
+            <button class="style-chip" data-style="luxury"><i>◆</i><span>لوکس</span></button>
+            <button class="style-chip" data-style="sales"><i>↗</i><span>فروش</span></button>
+            <button class="style-chip" data-style="social"><i>◉</i><span>ریلز</span></button>
           </div></div>
 
-          <div class="field"><label>رسانه‌ها</label><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>هر تعداد رسانه که می‌خواهی</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div></div>
+          <div class="field media-field"><div class="field-title"><label>رسانه‌های تبلیغ</label><span>هر تعداد</span></div><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>برای بهترین نتیجه، همه تصاویر و کلیپ‌های محصولت را انتخاب کن.</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div></div>
 
-          <div class="optional-row">
+          <div class="compact-options">
             <label class="music-drop"><input id="music" type="file" accept="audio/*"><span>♫</span><div><strong>موسیقی پس‌زمینه</strong><small id="musicName">اختیاری</small></div></label>
-            <div class="color-row"><input id="brandColor" type="color" value="#7c5cff"><span id="colorHex">#7C5CFF</span></div>
+            <div class="color-row"><input id="brandColor" type="color" value="#7c5cff" aria-label="رنگ برند"><span id="colorHex">#7C5CFF</span></div>
           </div>
 
-          <div class="button-row"><button id="scriptBtn" class="primary big">✦ ساخت تبلیغ با AI</button><button id="demoBtn" class="secondary">نمونه</button></div>
-        </aside>
+          <div class="button-row"><button id="scriptBtn" class="primary big">✦ ساخت تبلیغ با AI</button><button id="demoBtn" class="secondary demo-btn">نمونه</button></div>
+        </section>
 
         <section class="production card">
-          <div class="section-head"><div><small>فرآیند</small><h2>مرکز تولید</h2></div><span id="overallState" class="state-dot">● آماده</span></div>
+          <div class="section-head"><div><small>مرحله ۲</small><h2>ساخت خودکار</h2></div><span id="overallState" class="state-dot">● آماده</span></div>
           <div class="progress-card">
             <div class="progress-top"><div><strong id="progressTitle">آماده شروع</strong><small id="progressText">اطلاعات را وارد کن و ساخت را شروع کن.</small></div><b id="progressPercent">0%</b></div>
             <div class="progress-track"><i id="bar"></i></div>
             <div id="stageGrid" class="stage-grid">${stages.map((s,i)=>`<div class="pipeline-stage ${i===0?"active":""}" data-stage="${i}"><div class="stage-number">${s[0]}</div><div><b>${s[1]}</b><small>${s[2]}</small></div><span class="stage-check">○</span></div>`).join("")}</div>
           </div>
 
-          <details class="ops-details"><summary><span>جزئیات عملیات</span><em>نمایش</em></summary><div class="live-log"><div class="log-head"><span>وضعیت</span><button id="clearLog" class="tiny-btn">پاک کردن</button></div><div id="log" class="log"><div class="log-line muted"><span>●</span> منتظر شروع پروژه...</div></div></div></details>
+          <details class="script-details" open><summary><span>📝 سناریوی تبلیغ</span><em>ویرایش</em></summary><div class="script-panel"><div class="panel-title"><span id="scriptSource">منبع: —</span><button id="editScript" class="tiny-btn" disabled>ویرایش</button></div><textarea id="scriptEditor" disabled placeholder="سناریوی تبلیغاتی اینجا قرار می‌گیرد..."></textarea><div class="script-meta"><span id="scriptCount">0 کلمه</span><span>متناسب با زمان ویدئو</span></div></div></details>
 
-          <div class="script-panel"><div class="panel-title"><span>📝 سناریو</span><button id="editScript" class="tiny-btn" disabled>ویرایش</button></div><textarea id="scriptEditor" disabled placeholder="سناریوی تبلیغاتی اینجا قرار می‌گیرد..."></textarea><div class="script-meta"><span id="scriptCount">0 کلمه</span><span id="scriptSource">منبع: —</span></div></div>
+          <details class="ops-details"><summary><span>جزئیات عملیات</span><em>نمایش</em></summary><div class="live-log"><div class="log-head"><span>وضعیت ساخت</span><button id="clearLog" class="tiny-btn">پاک کردن</button></div><div id="log" class="log"><div class="log-line muted"><span>●</span> منتظر شروع پروژه...</div></div></div></details>
         </section>
 
         <section class="result card">
-          <div class="section-head"><div><small>خروجی</small><h2>پیش‌نمایش</h2></div><span id="outputState">آماده ساخت</span></div>
+          <div class="section-head"><div><small>مرحله ۳</small><h2>پیش‌نمایش و خروجی</h2></div><span id="outputState">آماده ساخت</span></div>
           <div id="stage" class="video-stage"><div class="empty"><div>✦</div><strong>ویدئوی نهایی اینجا نمایش داده می‌شود</strong><small>خروجی عمودی 9:16 با صدا و زیرنویس</small></div></div>
           <div class="output-actions"><button id="renderBtn" class="primary" disabled>▶ ساخت ویدئو</button><button id="downloadBtn" class="secondary" disabled>↓ دانلود</button></div>
           <div class="result-metrics"><div><span>◉</span><b id="voiceState">گویندگی</b><small id="voiceDetail">آماده</small></div><div><span>♫</span><b>موسیقی</b><small id="musicState">اختیاری</small></div><div><span>9:16</span><b>خروجی</b><small>720 × 1280</small></div></div>
@@ -144,7 +145,6 @@ function renderShell() {
   </div>`;
   setDir();
 }
-
 renderShell();
 
 function setProgress(percent, title, text) {
