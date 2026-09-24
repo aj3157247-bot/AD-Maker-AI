@@ -389,6 +389,14 @@ function languageLabel(code) { return ({en:"English",ar:"العربية",tr:"Tü
 function platformLabel(code) { return ({youtube_short:"YouTube Shorts",youtube:"YouTube",tiktok:"TikTok",instagram_reels:"Instagram Reels",facebook:"Facebook",instagram:"Instagram",linkedin:"LinkedIn",whatsapp:"WhatsApp"})[code] || "تبلیغ"; }
 function outputRatio(code) { return ({youtube:"16:9",instagram:"1:1",facebook:"4:5",linkedin:"1:1",youtube_short:"9:16",tiktok:"9:16",instagram_reels:"9:16",whatsapp:"9:16"})[code] || "9:16"; }
 
+function formatVideoTime(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  return h > 0 ? `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
 function isVideoFile(file) {
   const type = String(file?.type || "").toLowerCase();
   if (type.startsWith("video/")) return true;
@@ -418,7 +426,7 @@ async function analyzeUploadedVideo() {
   state.videoAnalysisBusy = true;
   updateVideoAnalysisUI();
   setStage(0);
-  setProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود…");
+  setProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود؛ در صورت خطای سرویس، OpenRouter Free خودکار فعال می‌شود…");
   log("تحلیل هوشمند ویدئوی معرفی شروع شد.", "info");
 
   const requestJson = async (url, options = {}, timeoutMs = 45000) => {
@@ -442,6 +450,58 @@ async function analyzeUploadedVideo() {
     } finally { clearTimeout(timer); }
   };
 
+  const captureFallbackFrames = async (file, maxFrames = 18) => {
+    const url = URL.createObjectURL(file);
+    const el = document.createElement("video");
+    el.preload = "metadata";
+    el.muted = true;
+    el.playsInline = true;
+    el.src = url;
+    const waitEvent = (name, timeout = 15000) => new Promise((resolve, reject) => {
+      let timer = setTimeout(() => { cleanup(); reject(new Error("بارگذاری فریم ویدئو بیش از حد طول کشید.")); }, timeout);
+      const done = () => { cleanup(); resolve(); };
+      const fail = () => { cleanup(); reject(new Error("مرورگر نتوانست ویدئو را برای تحلیل فریم‌ها باز کند.")); };
+      const cleanup = () => { clearTimeout(timer); el.removeEventListener(name, done); el.removeEventListener("error", fail); };
+      el.addEventListener(name, done, { once: true });
+      el.addEventListener("error", fail, { once: true });
+    });
+    const seek = (time) => new Promise((resolve, reject) => {
+      let timer = setTimeout(() => { cleanup(); reject(new Error("جابجایی به فریم ویدئو بیش از حد طول کشید.")); }, 12000);
+      const done = () => { cleanup(); resolve(); };
+      const fail = () => { cleanup(); reject(new Error("خواندن فریم ویدئو ناموفق بود.")); };
+      const cleanup = () => { clearTimeout(timer); el.removeEventListener("seeked", done); el.removeEventListener("error", fail); };
+      el.addEventListener("seeked", done, { once: true });
+      el.addEventListener("error", fail, { once: true });
+      try { el.currentTime = Math.max(0, Math.min(time, Math.max(0, (el.duration || 1) - 0.05))); } catch (e) { cleanup(); reject(e); }
+    });
+    try {
+      el.load();
+      await waitEvent("loadedmetadata", 20000);
+      const duration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 60;
+      const count = Math.max(8, Math.min(maxFrames, Math.ceil(duration / 20)));
+      const canvas = document.createElement("canvas");
+      const sourceW = el.videoWidth || 1280;
+      const sourceH = el.videoHeight || 720;
+      const width = Math.min(720, sourceW);
+      const height = Math.max(240, Math.round(width * sourceH / sourceW));
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext("2d", { alpha: false });
+      const frames = [];
+      for (let i = 0; i < count; i += 1) {
+        const time = count === 1 ? 0 : Math.min(Math.max(0, duration - 0.15), (duration * i) / (count - 1));
+        await seek(time);
+        ctx.drawImage(el, 0, 0, width, height);
+        const data = canvas.toDataURL("image/jpeg", 0.58);
+        frames.push({ time: formatVideoTime(time), data });
+      }
+      return { frames, duration };
+    } finally {
+      URL.revokeObjectURL(url);
+      el.removeAttribute("src");
+      el.load();
+    }
+  };
+
   try {
     const size = Number(video.size || 0);
     if (!size) throw new Error("حجم ویدئو معتبر نیست.");
@@ -452,6 +512,7 @@ async function analyzeUploadedVideo() {
     // inline video as the preferred path for small one-off clips.
     let fileInfo = null;
     let fileName = "";
+    let geminiPreparationFailed = false;
     if (size <= 20 * 1024 * 1024) {
       setProgress(18, "آماده‌سازی ویدئو", "ویدئوی کوتاه برای Gemini آماده می‌شود…");
       log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ مسیر مستقیم Interactions فعال شد تا خطای blob:// ایجاد نشود.`, "info");
@@ -461,14 +522,19 @@ async function analyzeUploadedVideo() {
       const form = new FormData();
       form.append("video", video, video.name || "site-demo.mp4");
       setProgress(22, "ارسال ویدئو", "در حال ارسال فایل به Gemini…");
-      fileInfo = await requestJson(`${window.location.origin}/api/analyze-video/upload`, {
-        method: "POST",
-        body: form
-      }, 180000);
-      setProgress(50, "ارسال ویدئو", "آپلود ویدئو به Gemini کامل شد.");
-      log("مرحله ۱: ویدئو کامل به Gemini ارسال و ثبت شد.", "success");
-      fileName = fileInfo?.fileName || "";
-      if (!fileName) throw new Error("Gemini فایل نهایی را ثبت نکرد.");
+      try {
+        fileInfo = await requestJson(`${window.location.origin}/api/analyze-video/upload`, {
+          method: "POST",
+          body: form
+        }, 180000);
+        setProgress(50, "ارسال ویدئو", "آپلود ویدئو به Gemini کامل شد.");
+        log("مرحله ۱: ویدئو کامل به Gemini ارسال و ثبت شد.", "success");
+        fileName = fileInfo?.fileName || "";
+        if (!fileName) throw new Error("Gemini فایل نهایی را ثبت نکرد.");
+      } catch (prepError) {
+        geminiPreparationFailed = true;
+        log(`Gemini نتوانست فایل بزرگ را آماده کند؛ مسیر OpenRouter Free فعال خواهد شد. ${String(prepError?.message || prepError)}`, "warning");
+      }
     } else {
       throw new Error("این ویدئو بیشتر از 95MB است. برای تحلیل در این نسخه، لطفاً ویدئو را کمی فشرده‌تر کن و دوباره انتخاب کن.");
     }
@@ -510,7 +576,7 @@ async function analyzeUploadedVideo() {
     setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
     log("مرحله ۳: تحلیل واقعی ویدئو با Gemini Interactions و اجرای پس‌زمینه شروع شد.");
     const failedModels = new Set();
-    const maxFallbacks = 5;
+    const maxFallbacks = geminiPreparationFailed ? 0 : 2;
     const startInteraction = async () => {
       if (size <= 20 * 1024 * 1024) {
         const inlineForm = new FormData();
@@ -565,7 +631,8 @@ async function analyzeUploadedVideo() {
               log(`Gemini این تلاش را به‌دلیل ظرفیت/High Demand متوقف کرد${failedModel ? ` (${failedModel})` : ""}. تلاش بعدی خودکار انجام می‌شود.`, "warning");
               break;
             }
-            throw statusError;
+            lastFailure = statusError;
+            break;
           }
           const st = String(status?.status || "in_progress").toLowerCase();
           if (status?.status === "completed" && status?.analysis) {
@@ -582,7 +649,8 @@ async function analyzeUploadedVideo() {
               log(`Gemini این تلاش را به‌دلیل ظرفیت/High Demand متوقف کرد${failedModel ? ` (${failedModel})` : ""}. تلاش بعدی خودکار انجام می‌شود.`, "warning");
               break;
             }
-            throw new Error(status?.detail || `تحلیل Gemini با وضعیت ${st} پایان یافت.`);
+            lastFailure = new Error(status?.detail || `تحلیل Gemini با وضعیت ${st} پایان یافت.`);
+            break;
           }
           const percent = Math.min(88, 68 + Math.round((poll / 120) * 18));
           setProgress(percent, "تحلیل محتوای ویدئو", `Gemini در حال بررسی ویدئو است… وضعیت: ${st === "queued" ? "در صف" : "در حال پردازش"}`);
@@ -599,11 +667,41 @@ async function analyzeUploadedVideo() {
           await wait(1200);
           continue;
         }
-        throw e;
+        lastFailure = e;
+        break;
       }
     }
     if (!completed || !resultPayload) {
-      throw lastFailure || new Error("Gemini پس از چند مدل جایگزین نتوانست تحلیل ویدئو را کامل کند.");
+      setProgress(72, "موتور جایگزین", "Gemini در دسترس نبود؛ در حال آماده‌سازی فریم‌های ویدئو برای OpenRouter…");
+      log("Gemini نتوانست تحلیل را کامل کند؛ موتور جایگزین OpenRouter Free به‌صورت خودکار فعال شد.", "warning");
+      try {
+        const captured = await captureFallbackFrames(video, 18);
+        setProgress(76, "موتور جایگزین", `${captured.frames.length} فریم مهم از ویدئو آماده شد؛ OpenRouter در حال تحلیل است…`);
+        log(`برای OpenRouter ${captured.frames.length} فریم کلیدی از ویدئو استخراج شد.`, "info");
+        const fallbackPayload = await requestJson(`${window.location.origin}/api/analyze-video/openrouter-fallback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            frames: captured.frames,
+            brand: $("#brand")?.value.trim() || "",
+            description: $("#desc")?.value.trim() || "",
+            language: state.language,
+            duration: String(state.duration),
+            platform: platformLabel(state.platform)
+          })
+        }, 180000);
+        if (fallbackPayload?.status === "completed" && fallbackPayload?.script) {
+          resultPayload = { ...fallbackPayload, analysis: { summary: fallbackPayload.summary || "", facts: fallbackPayload.facts || [], scenes: fallbackPayload.scenes || [], script: fallbackPayload.script } };
+          completed = true;
+          log(`OpenRouter Free تحلیل را کامل کرد${fallbackPayload.model ? ` با ${fallbackPayload.model}` : ""}.`, "success");
+        } else {
+          throw new Error(fallbackPayload?.detail || "OpenRouter پاسخ قابل استفاده برنگرداند.");
+        }
+      } catch (fallbackError) {
+        const base = lastFailure?.message ? `Gemini: ${lastFailure.message}` : "Gemini تحلیل را کامل نکرد.";
+        const second = String(fallbackError?.message || fallbackError);
+        throw new Error(`${base} | OpenRouter Free: ${second}`);
+      }
     }
     setProgress(92, "تحلیل محتوای ویدئو", "تحلیل صحنه‌ها کامل شد؛ در حال آماده‌سازی سناریو…");
     const result = resultPayload.analysis;
