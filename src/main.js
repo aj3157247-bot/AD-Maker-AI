@@ -468,46 +468,13 @@ async function analyzeUploadedVideo() {
       throw new Error("این ویدئو بیشتر از 95MB است. برای تحلیل در این نسخه، لطفاً ویدئو را کمی فشرده‌تر کن و دوباره انتخاب کن.");
     }
 
-    if (size <= 20 * 1024 * 1024) {
-      // Skip Files API status polling because there is no uploaded Gemini file.
-      // The inline Interaction itself becomes the processing job.
-      setProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده است؛ تحلیل سریع Gemini شروع می‌شود…");
-      log("مرحله ۲: مسیر مستقیم ویدئو آماده شد؛ بدون URI فایل Gemini تحلیل شروع می‌شود.", "success");
-    } else {
-    let fileState = String(fileInfo.state || "PROCESSING").toUpperCase();
-    let fileInfoCurrent = fileInfo;
-    let polls = 0;
-    while (fileState !== "ACTIVE") {
-      if (fileState === "FAILED") throw new Error(fileInfoCurrent.detail || "Gemini نتوانست فایل ویدئو را پردازش کند.");
-      polls += 1;
-      const percent = Math.min(58, 50 + Math.min(8, polls));
-      setProgress(percent, "پردازش ویدئو", `Gemini در حال آماده‌سازی ویدئو است… وضعیت: ${fileState}`);
-      if (polls === 1) log("آپلود کامل شد؛ Gemini در حال پردازش ویدئو است.", "success");
-      await wait(3500);
-      fileInfoCurrent = await requestJson(`${window.location.origin}/api/analyze-video/file-status?name=${encodeURIComponent(fileName)}`, {}, 45000);
-      fileState = String(fileInfoCurrent.state || "PROCESSING").toUpperCase();
-      if (polls > 90) throw new Error("پردازش فایل در Gemini بیش از حد طول کشید. ویدئوی کوتاه‌تر یا کم‌حجم‌تر امتحان کن.");
-    }
-
-    setProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
-    log("مرحله ۲: فایل آماده شد؛ تحلیل پس‌زمینه شروع می‌شود.", "success");
-    const formStart = {
-      fileName: fileInfoCurrent.fileName || fileName,
-      fileUri: fileInfoCurrent.fileUri || fileInfo.fileUri,
-      mimeType: fileInfoCurrent.mimeType || fileInfo.mimeType || mimeType,
-      brand: $("#brand")?.value.trim() || "",
-      description: $("#desc")?.value.trim() || "",
-      language: state.language,
-      duration: String(state.duration),
-      platform: platformLabel(state.platform)
-    };
-    setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
-    log("مرحله ۳: تحلیل واقعی ویدئو با Gemini Interactions و اجرای پس‌زمینه شروع شد.");
+    // Prepare the Gemini input. Small videos use the direct inline route;
+    // larger videos use the Files API route and wait until the uploaded file is ACTIVE.
     let started;
     if (size <= 20 * 1024 * 1024) {
-      // Small-video path: NEVER send fileUri/fileName. The video bytes are sent
-      // directly to the Interactions API, so a blob:// Files API URI cannot leak
-      // into the request.
+      setProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده است؛ تحلیل سریع Gemini شروع می‌شود…");
+      log("مرحله ۲: مسیر مستقیم ویدئو آماده شد؛ بدون URI فایل Gemini تحلیل شروع می‌شود.", "success");
+
       const inlineForm = new FormData();
       inlineForm.append("video", video, video.name || "site-demo.mp4");
       inlineForm.append("brand", $("#brand")?.value.trim() || "");
@@ -517,15 +484,45 @@ async function analyzeUploadedVideo() {
       inlineForm.append("platform", platformLabel(state.platform));
       setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی مستقیم ویدئو است…");
       log("تحلیل مستقیم Interactions شروع شد؛ Files API و blob:// برای این ویدئو استفاده نمی‌شود.", "success");
-      started = await requestJson(`${window.location.origin}/api/analyze-video/start-inline`, { method: "POST", body: inlineForm }, 120000);
+      started = await requestJson(`${window.location.origin}/api/analyze-video/start-inline`, {
+        method: "POST",
+        body: inlineForm
+      }, 120000);
     } else {
-      // Large-video path: use the verified Files API URI. Never rewrite it into
-      // a blob:// value; Gemini expects the URI returned by Files API.
-      try {
-        started = await requestJson(`${window.location.origin}/api/analyze-video/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formStart) }, 60000);
-      } catch (startError) {
-        throw startError;
+      let fileState = String(fileInfo.state || "PROCESSING").toUpperCase();
+      let fileInfoCurrent = fileInfo;
+      let polls = 0;
+      while (fileState !== "ACTIVE") {
+        if (fileState === "FAILED") throw new Error(fileInfoCurrent.detail || "Gemini نتوانست فایل ویدئو را پردازش کند.");
+        polls += 1;
+        const percent = Math.min(58, 50 + Math.min(8, polls));
+        setProgress(percent, "پردازش ویدئو", `Gemini در حال آماده‌سازی ویدئو است… وضعیت: ${fileState}`);
+        if (polls === 1) log("آپلود کامل شد؛ Gemini در حال پردازش ویدئو است.", "success");
+        await wait(3500);
+        fileInfoCurrent = await requestJson(`${window.location.origin}/api/analyze-video/file-status?name=${encodeURIComponent(fileName)}`, {}, 45000);
+        fileState = String(fileInfoCurrent.state || "PROCESSING").toUpperCase();
+        if (polls > 90) throw new Error("پردازش فایل در Gemini بیش از حد طول کشید. ویدئوی کوتاه‌تر یا کم‌حجم‌تر امتحان کن.");
       }
+
+      setProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
+      log("مرحله ۲: فایل آماده شد؛ تحلیل پس‌زمینه شروع می‌شود.", "success");
+      const formStart = {
+        fileName: fileInfoCurrent.fileName || fileName,
+        fileUri: fileInfoCurrent.fileUri || fileInfo.fileUri,
+        mimeType: fileInfoCurrent.mimeType || fileInfo.mimeType || mimeType,
+        brand: $("#brand")?.value.trim() || "",
+        description: $("#desc")?.value.trim() || "",
+        language: state.language,
+        duration: String(state.duration),
+        platform: platformLabel(state.platform)
+      };
+      setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
+      log("مرحله ۳: تحلیل واقعی ویدئو با Gemini Interactions و اجرای پس‌زمینه شروع شد.");
+      started = await requestJson(`${window.location.origin}/api/analyze-video/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formStart)
+      }, 60000);
     }
 
     // Long video analysis now runs as a Gemini background Interaction. The
