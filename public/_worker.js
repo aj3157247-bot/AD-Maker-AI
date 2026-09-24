@@ -95,23 +95,83 @@ async function openRouterScript(apiKey, prompt, request, maxTokens = 2400) {
 async function tts(request, env) {
   try {
     const b = await request.json();
-    if (!b.text) return json({ error: "text_required" }, 400);
-    if (!env.ELEVENLABS_API_KEY) return json({ audio: null, fallback: true });
-    const voice = env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
-    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
-      method: "POST",
-      headers: { "xi-api-key": env.ELEVENLABS_API_KEY, "Content-Type": "application/json", "Accept": "audio/mpeg" },
+    const text = String(b.text || '').trim();
+    if (!text) return json({ error: 'text_required' }, 400);
+    if (!env.ELEVENLABS_API_KEY) return json({ audio: null, fallback: true, error: 'elevenlabs_missing_api_key' }, 503);
+
+    // Eleven v3 is the current expressive multilingual model and is a better fit
+    // for Afghan Dari/Pashto than the older Multilingual v2 model.
+    const configuredVoice = env.ELEVENLABS_VOICE_ID || '';
+    const voices = [...new Set([configuredVoice, 'JBFqnCBsd6RMkjVDRZzb'].filter(Boolean))];
+    const models = ['eleven_v3', 'eleven_multilingual_v2'];
+    let lastError = null;
+
+    for (const voice of voices) {
+      for (const model of models) {
+        const result = await elevenLabsTTS(env.ELEVENLABS_API_KEY, voice, model, text);
+        if (result.ok) return json({ audio: result.audio, mime: 'audio/mpeg', fallback: false, provider: 'elevenlabs', model, voice });
+        lastError = result;
+
+        // Do not retry a bad key/quota/rate-limit with another model; it cannot help.
+        if ([401, 402, 403, 429].includes(result.status)) {
+          return json({
+            audio: null,
+            fallback: true,
+            error: result.code || 'elevenlabs_request_failed',
+            detail: result.message || 'ElevenLabs request failed.',
+            status: result.status,
+            requestId: result.requestId || null
+          }, result.status === 429 ? 429 : 502);
+        }
+
+        // A missing/inaccessible voice can be solved by trying the known public
+        // fallback voice. Other validation errors are worth trying the next model.
+      }
+    }
+
+    return json({
+      audio: null,
+      fallback: true,
+      error: lastError?.code || 'elevenlabs_request_failed',
+      detail: lastError?.message || 'ElevenLabs could not generate the requested speech.',
+      status: lastError?.status || 422,
+      requestId: lastError?.requestId || null
+    }, 502);
+  } catch (e) {
+    return json({ audio: null, fallback: true, error: 'tts_server_error', detail: String(e?.message || e) }, 500);
+  }
+}
+
+async function elevenLabsTTS(apiKey, voice, model, text) {
+  try {
+    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': apiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'audio/mpeg'
+      },
       body: JSON.stringify({
-        text: b.text,
-        model_id: "eleven_multilingual_v2",
-        voice_settings: { stability: .42, similarity_boost: .78, style: .25, use_speaker_boost: true }
+        text,
+        model_id: model,
+        voice_settings: { stability: 0.42, similarity_boost: 0.78, style: 0.25, use_speaker_boost: true }
       })
     });
-    if (!r.ok) return json({ audio: null, fallback: true });
-    const buf = await r.arrayBuffer();
-    return json({ audio: arrayBufferToBase64(buf), mime: "audio/mpeg", fallback: false });
+
+    if (r.ok) return { ok: true, audio: arrayBufferToBase64(await r.arrayBuffer()) };
+
+    let detail = null;
+    try { detail = await r.json(); } catch (_) {}
+    const d = detail?.detail || {};
+    return {
+      ok: false,
+      status: r.status,
+      code: d?.code || d?.status || `http_${r.status}`,
+      message: d?.message || (typeof d === 'string' ? d : `ElevenLabs returned HTTP ${r.status}.`),
+      requestId: r.headers.get('request-id') || null
+    };
   } catch (e) {
-    return json({ audio: null, fallback: true });
+    return { ok: false, status: 503, code: 'elevenlabs_network_error', message: String(e?.message || e) };
   }
 }
 
