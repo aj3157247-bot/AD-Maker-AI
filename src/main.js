@@ -258,21 +258,42 @@ $("#scriptBtn").onclick = async () => {
 
     setStage(2); setProgress(42, "گویندگی", t("voice")); log("درخواست ساخت گویندگی ارسال شد.");
     const voice = await getVoice();
-    if (voice) { setStage(2, "done"); setProgress(52, "گویندگی آماده", t("voiceReady")); log(t("voiceReady"), "success"); }
-    else { setStage(2, "done"); setProgress(50, "گویندگی جایگزین", t("voiceFallback")); log(t("voiceFallback")); }
+    if (!voice) {
+      setStage(2, "error");
+      setProgress(50, "گویندگی ناموفق بود", "برای ساخت ویدئوی دارای صدا، اتصال ElevenLabs را بررسی کن و دوباره ساخت تبلیغ را بزن.");
+      $("#renderBtn").disabled = true;
+      state.generated = false;
+      $("#overallState").textContent = "● نیاز به بازسازی گویندگی";
+      log("ویدئو بدون گویندگی ساخته نمی‌شود تا خروجی بی‌صدا تحویل نشود.", "error");
+      return;
+    }
+    setStage(2, "done"); setProgress(52, "گویندگی آماده", t("voiceReady")); log(t("voiceReady"), "success");
 
     setStage(3); setProgress(58, "آماده‌سازی صحنه‌ها", "رسانه‌ها، متن و رنگ برند برای ویدئو چیده می‌شوند..."); log("صحنه‌بندی تبلیغ آماده می‌شود."); await wait(350); setStage(3, "done");
-    $("#renderBtn").disabled = false; state.generated = true; $("#overallState").textContent = "● آماده رندر"; setProgress(62, "آماده رندر", "سناریو و صدا آماده‌اند. برای ساخت ویدئو روی دکمه پایین بزن."); log("پروژه برای رندر نهایی آماده است.", "success");
+    $("#renderBtn").disabled = false; state.generated = true; $("#overallState").textContent = "● آماده رندر با صدا"; setProgress(62, "آماده رندر", "سناریو و گویندگی آماده‌اند. خروجی نهایی با صدا ساخته می‌شود."); log("پروژه برای رندر نهایی آماده است.", "success");
   } finally { state.busy = false; $("#scriptBtn").disabled = false; }
 };
 
 async function getVoice() {
-  $("#voiceState").textContent = "در حال ساخت"; $("#voiceDetail").textContent = "ElevenLabs / API";
+  $("#voiceState").textContent = "در حال ساخت"; $("#voiceDetail").textContent = "ElevenLabs v3";
+  state.voiceBlob = null;
+  state.voiceMode = "none";
   try {
     const j = await api("/api/tts", { text: state.script, language: state.language });
-    if (j.audio) { state.voiceBlob = base64ToBlob(j.audio, j.mime || "audio/mpeg"); state.voiceMode = "elevenlabs"; $("#voiceState").textContent = "گویندگی AI"; $("#voiceDetail").textContent = "آماده ✓"; return state.voiceBlob; }
-  } catch (e) { log("ElevenLabs پاسخ موفق نداد؛ خروجی با صدای مرورگر ادامه پیدا می‌کند.", "error"); }
-  state.voiceBlob = null; state.voiceMode = "browser"; $("#voiceState").textContent = "صدای مرورگر"; $("#voiceDetail").textContent = "جایگزین"; return null;
+    if (j.audio) {
+      state.voiceBlob = base64ToBlob(j.audio, j.mime || "audio/mpeg");
+      state.voiceMode = "elevenlabs";
+      $("#voiceState").textContent = "گویندگی AI";
+      $("#voiceDetail").textContent = `Eleven v3 · ${state.language === "ps" ? "پښتو" : state.language === "en" ? "English" : "دری"} ✓`;
+      return state.voiceBlob;
+    }
+    log(`ElevenLabs گویندگی تولید نکرد (${j.error || "خطای نامشخص"}).`, "error");
+  } catch (e) {
+    log("ارتباط با سرویس گویندگی موفق نشد. کلید ElevenLabs و تنظیمات Cloudflare را بررسی کن.", "error");
+  }
+  $("#voiceState").textContent = "گویندگی آماده نیست";
+  $("#voiceDetail").textContent = "خروجی بی‌صدا مجاز نیست";
+  return null;
 }
 
 $("#renderBtn").onclick = async () => {
@@ -325,6 +346,7 @@ $("#helpBtn").onclick = () => alert("۱) اطلاعات محصول را وارد
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function renderVideo(voiceBlob) {
+  if (!voiceBlob || !voiceBlob.size) throw new Error("گویندگی صوتی آماده نیست؛ ابتدا گویندگی AI را با موفقیت بساز.");
   const W = 720, H = 1280;
   const canvas = document.createElement("canvas");
   canvas.width = W; canvas.height = H;
