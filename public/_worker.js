@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "2.6.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "2.7.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
@@ -176,52 +176,61 @@ async function tts(request, env) {
     if (!text) return json({ audio: null, fallback: true, error: 'text_required' }, 400);
     if (!env.ELEVENLABS_API_KEY) return json({ audio: null, fallback: true, error: 'elevenlabs_missing_api_key' }, 503);
 
-    // ElevenLabs limits a single TTS request to 10,000 characters on this setup.
-    // Long advertisements are therefore split into natural sentence/word chunks,
-    // each rendered with the same voice/model. The browser joins the returned audio.
-    // Eleven v3 currently has a 5,000-character per-request limit; keep a safe margin.
-    // Multilingual v2 accepts longer text, so the same chunks work for both models.
-    const chunks = splitTtsText(text, 4200);
+    const language = String(b.language || 'en').toLowerCase();
+    // ElevenLabs currently supports Persian and Pashto in Eleven v3, while
+    // Flash v2.5 / Multilingual v2 do not list those languages. For the other
+    // supported languages, Flash v2.5 is the fast/low-latency path.
+    const v3Only = language === 'fa' || language === 'ps';
+    const models = v3Only
+      ? [{ id: 'eleven_v3', maxChars: 4200 }]
+      : [{ id: 'eleven_flash_v2_5', maxChars: 12000 }, { id: 'eleven_v3', maxChars: 4200 }];
+
     const configuredVoice = env.ELEVENLABS_VOICE_ID || '';
     const voices = [...new Set([configuredVoice, 'JBFqnCBsd6RMkjVDRZzb'].filter(Boolean))];
-    const models = ['eleven_v3', 'eleven_multilingual_v2'];
     let lastError = null;
 
     for (const voice of voices) {
       for (const model of models) {
+        const chunks = splitTtsText(text, model.maxChars);
         const parts = [];
         let failed = false;
-        // Render at most two chunks at once. This keeps long ads fast without
-        // flooding ElevenLabs with a large burst of requests.
-        for (let start = 0; start < chunks.length && !failed; start += 2) {
-          const batch = chunks.slice(start, start + 2);
-          const results = await Promise.all(batch.map(chunk =>
-            elevenLabsTTS(env.ELEVENLABS_API_KEY, voice, model, chunk, b.language)
-          ));
-          for (const result of results) {
-            if (!result.ok) { lastError = result; failed = true; break; }
-            parts.push(result.audio);
+
+        // Do chunks sequentially. Parallel TTS calls can hit ElevenLabs
+        // concurrency limits and can make a long request appear stuck.
+        for (let i = 0; i < chunks.length; i++) {
+          const result = await elevenLabsTTSWithRetry(
+            env.ELEVENLABS_API_KEY,
+            voice,
+            model.id,
+            chunks[i],
+            language
+          );
+          if (!result.ok) {
+            lastError = result;
+            failed = true;
+            break;
           }
-        }
-        if (!failed && parts.length) {
-          if (parts.length === 1) {
-            return json({ audio: parts[0], mime: 'audio/mpeg', fallback: false, provider: 'elevenlabs', model, voice, chunks: 1, characters: text.length });
-          }
-          return json({ audioParts: parts, mime: 'audio/mpeg', fallback: false, provider: 'elevenlabs', model, voice, chunks: parts.length, characters: text.length });
+          parts.push(result.audio);
         }
 
-        // Authentication, quota and rate-limit errors cannot be fixed by switching models.
-        if ([401, 402, 403, 429].includes(lastError?.status)) {
+        if (!failed && parts.length) {
           return json({
-            audio: null,
-            fallback: true,
-            error: lastError.code || 'elevenlabs_request_failed',
-            detail: lastError.message || 'ElevenLabs request failed.',
-            status: lastError.status,
-            requestId: lastError.requestId || null
-          }, lastError.status === 429 ? 429 : 502);
+            audio: parts.length === 1 ? parts[0] : null,
+            audioParts: parts.length > 1 ? parts : undefined,
+            mime: 'audio/mpeg',
+            fallback: false,
+            provider: 'elevenlabs',
+            model: model.id,
+            voice,
+            chunks: parts.length,
+            characters: text.length
+          });
         }
+
+        // Auth/quota/permission errors won't be fixed by changing models.
+        if ([401, 402, 403].includes(lastError?.status)) break;
       }
+      if ([401, 402, 403].includes(lastError?.status)) break;
     }
 
     return json({
@@ -231,12 +240,23 @@ async function tts(request, env) {
       detail: lastError?.message || 'ElevenLabs could not generate the requested speech.',
       status: lastError?.status || 422,
       requestId: lastError?.requestId || null,
-      characters: text.length,
-      chunks: chunks.length
-    }, 502);
+      characters: text.length
+    }, lastError?.status === 429 ? 429 : 502);
   } catch (e) {
     return json({ audio: null, fallback: true, error: 'tts_server_error', detail: String(e?.message || e) }, 500);
   }
+}
+
+async function elevenLabsTTSWithRetry(apiKey, voice, model, text, language) {
+  let last = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await elevenLabsTTS(apiKey, voice, model, text, language);
+    if (result.ok) return result;
+    last = result;
+    if (![408, 429, 500, 502, 503, 504].includes(result.status) || attempt === 1) break;
+    await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
+  }
+  return last;
 }
 
 function normalizeTtsText(text) {
@@ -284,9 +304,10 @@ async function elevenLabsTTS(apiKey, voice, model, text, language) {
       voice_settings: { stability: 0.42, similarity_boost: 0.78, style: 0.25, use_speaker_boost: true }
     };
     // language_code is supported by v3; multilingual_v2 ignores it.
-    if (model === 'eleven_v3' && languageCode) body.language_code = languageCode;
+    if (languageCode && model !== 'eleven_multilingual_v2') body.language_code = languageCode;
+    if (model === 'eleven_flash_v2_5') body.apply_text_normalization = 'auto';
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 60000);
+    const timer = setTimeout(() => controller.abort(), 22000);
     let r;
     try {
       r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
