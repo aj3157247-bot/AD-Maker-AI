@@ -168,6 +168,7 @@ async function startVideoAnalysis(request, env) {
     const duration = Math.max(15, Math.min(300, Number(b.duration) || 60));
     const platform = String(b.platform || "YouTube Shorts");
     const mime = String(b.mimeType || "video/mp4");
+    const excludedModels = new Set(Array.isArray(b.excludeModels) ? b.excludeModels.map(x => String(x || "").trim()).filter(Boolean) : []);
     const langName = {
       en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian",
       ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek"
@@ -268,6 +269,7 @@ For the script: narrate the actual sequence of the video so the voice matches wh
 
     async function tryCreate(models, processing) {
       for (const model of models) {
+        if (excludedModels.has(model)) continue;
         for (let attempt = 1; attempt <= 1; attempt += 1) {
           attemptedModels.push(`${model}/${processing}#${attempt}`);
           let response = null;
@@ -365,6 +367,8 @@ async function startVideoAnalysisInline(request, env) {
     const language = String(form.get("language") || "fa").toLowerCase();
     const duration = Math.max(15, Math.min(300, Number(form.get("duration")) || 60));
     const platform = String(form.get("platform") || "YouTube Shorts");
+    let excludedModels = new Set();
+    try { excludedModels = new Set(JSON.parse(String(form.get("excludeModels") || "[]")).map(x => String(x || "").trim()).filter(Boolean)); } catch (_) {}
     const langName = { en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian", ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" }[language] || "Persian";
     const targetWords = Math.max(35, Math.min(900, Math.round(duration * 2.2)));
     const prompt = `Analyze this product/site demonstration video for AD Maker AI. Inspect the actual frames and visible UI text. Do not invent anything not shown or stated. Brand: ${brand || "Unknown"}. User description: ${description || "None provided"}. Platform: ${platform}. Output language: ${langName}. Target advertisement duration: ${duration} seconds. Target voice-over length: about ${targetWords} words. Return ONLY JSON with summary, facts, scenes[{start,end,title,description}], and script. The script must narrate the actual sequence in order and end with a call to action. Never invent prices, discounts, statistics, ratings, guarantees, locations, users, or features.`;
@@ -377,6 +381,7 @@ async function startVideoAnalysisInline(request, env) {
     let lastStatus = 503;
     let lastError = "";
     for (const model of inlineModels) {
+      if (excludedModels.has(model)) continue;
       attemptedModels.push(model);
       const body = {
         model,
@@ -488,7 +493,17 @@ async function analysisInteractionStatus(request, env) {
       if (!script) return json({ error: "gemini_no_script", detail: "Gemini تحلیل را انجام داد اما سناریوی صوتی برنگرداند." }, 502);
       return json({ ok: true, status: "completed", provider: "gemini-video", model: result.model || env.GEMINI_MODEL || "gemini-3.8-flash", summary: String(parsed.summary || ""), facts, scenes, script });
     }
-    if (["failed", "cancelled"].includes(status)) return json({ error: "gemini_analysis_failed", detail: result?.error?.message || `Gemini عملیات با وضعیت ${status} پایان یافت.`, status }, 502);
+    if (["failed", "cancelled"].includes(status)) {
+      const detail = result?.error?.message || `Gemini عملیات با وضعیت ${status} پایان یافت.`;
+      const retryable = /high demand|rate limit|resource exhausted|quota|capacity|unavailable|temporar|429|503/i.test(detail);
+      return json({
+        error: "gemini_analysis_failed",
+        detail,
+        status,
+        retryable,
+        failedModel: String(result?.model || "")
+      }, retryable ? 503 : 502);
+    }
     return json({ ok: true, status, progress: 60 });
   } catch (e) {
     return json({ error: "video_analysis_status_exception", detail: String(e?.message || e) }, 500);
