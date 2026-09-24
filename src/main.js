@@ -228,13 +228,23 @@ function base64ToBlob(b64, mime) {
 async function api(path, payload, timeoutMs = 90000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const endpoint = new URL(path, window.location.href).href;
+  const requestBody = JSON.stringify(payload ?? {});
   try {
-    const r = await fetch(path, {
+    if (path === "/api/tts") {
+      log("در حال ارسال درخواست گویندگی به سرور...", "info");
+      if (typeof window.fetch !== "function") throw new Error("مرورگر امکان ارسال درخواست شبکه را در این صفحه فراهم نکرده است.");
+    }
+    const r = await window.fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      mode: "same-origin",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: requestBody,
       signal: controller.signal
     });
+    if (path === "/api/tts") log(`درخواست گویندگی ارسال شد؛ پاسخ سرور: HTTP ${r.status}.`, r.ok ? "success" : "error");
     const raw = await r.text();
     if (!r.ok) {
       let message = raw || `API ${r.status}`;
@@ -530,6 +540,7 @@ async function getVoice() {
     const charCount = text.length;
     if (!text) throw new Error("متن سناریو خالی است.");
     log(`متن گویندگی ${charCount.toLocaleString("en-US")} کاراکتر است؛ در صورت طولانی بودن خودکار به چند بخش تقسیم می‌شود.`, "info");
+    log("شروع اتصال به سرویس گویندگی...", "info");
     const j = await api("/api/tts", { text, language: state.language });
     let blob = null;
     if (j.audio) {
