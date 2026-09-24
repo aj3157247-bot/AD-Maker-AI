@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "2.2.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "2.3.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
@@ -66,7 +66,7 @@ Requirements:
       fallback: true,
       provider: "local",
       error: "no_ai_provider_configured",
-      detail: "هیچ سرویس AI در محیط Cloudflare در دسترس نیست. OPENROUTER_API_KEY یا binding مربوط به Cloudflare AI تنظیم نشده است.",
+      detail: "OpenRouter پاسخ قابل استفاده نداد و Cloudflare AI هم فعال نیست. اگر خطا 429/limit بود، سقف درخواست رایگان OpenRouter را بررسی کن؛ اگر 401/403 بود، کلید یا دسترسی را بررسی کن.",
       openrouterConfigured: Boolean(env.OPENROUTER_API_KEY),
       cloudflareAIConfigured: Boolean(env.AI),
       targetWords,
@@ -91,10 +91,11 @@ Requirements:
 }
 
 async function openRouterScript(apiKey, prompt, request, maxTokens = 2400) {
+  // Keep the list to currently published OpenRouter IDs. The free router is
+  // also retained as a fallback because OpenRouter updates its free pool.
   const models = [
-    "openrouter/free",
-    "nvidia/nemotron-3-ultra:free",
-    "google/gemma-4-31b-it:free"
+    "google/gemma-4-31b-it:free",
+    "openrouter/free"
   ];
   let last = { status: 0, code: "openrouter_no_model_response", message: "OpenRouter returned no usable script." };
   for (const model of models) {
@@ -110,15 +111,20 @@ async function openRouterScript(apiKey, prompt, request, maxTokens = 2400) {
         body: JSON.stringify({
           model,
           messages: [{ role: "user", content: prompt }],
-          temperature: 0.75,
-          max_tokens: maxTokens
+          temperature: 0.7,
+          max_tokens: Math.min(3000, Math.max(900, Number(maxTokens) || 1800))
         })
       });
       if (r.ok) {
         const j = await r.json();
-        const script = j?.choices?.[0]?.message?.content?.trim() || "";
+        const content = j?.choices?.[0]?.message?.content;
+        const script = typeof content === "string" ? content.trim() : "";
         if (script) return script;
-        last = { status: 502, code: "openrouter_empty_response", message: `مدل ${model} پاسخ متنی برنگرداند.` };
+        last = {
+          status: 502,
+          code: "openrouter_empty_response",
+          message: `مدل ${model} پاسخ متنی قابل استفاده برنگرداند.`
+        };
         continue;
       }
       let detail = null;
@@ -127,7 +133,8 @@ async function openRouterScript(apiKey, prompt, request, maxTokens = 2400) {
       last = {
         status: r.status,
         code: err?.code || err?.type || `http_${r.status}`,
-        message: err?.message || `OpenRouter برای مدل ${model} خطای HTTP ${r.status} برگرداند.`
+        message: err?.message || `OpenRouter برای مدل ${model} خطای HTTP ${r.status} برگرداند.`,
+        model
       };
       // Authentication, permission and account-limit errors cannot be fixed by switching models.
       if ([401, 403, 402].includes(r.status)) break;
@@ -135,7 +142,11 @@ async function openRouterScript(apiKey, prompt, request, maxTokens = 2400) {
       last = { status: 503, code: "openrouter_network_error", message: String(e?.message || e) };
     }
   }
-  throw Object.assign(new Error(last.message), { status: last.status, code: last.code });
+  throw Object.assign(new Error(last.message), {
+    status: last.status,
+    code: last.code,
+    model: last.model || null
+  });
 }
 
 async function tts(request, env) {
