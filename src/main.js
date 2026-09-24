@@ -281,8 +281,16 @@ $("#renderBtn").onclick = async () => {
   try {
     setStage(4); setProgress(66, "رندر ویدئو", t("render")); log("رندر فریم‌ها شروع شد.");
     state.lastVideo = await renderVideo(state.voiceBlob);
-    setStage(4, "done"); setStage(5, "done"); setProgress(100, t("done"), t("saved")); $("#outputState").textContent = "✓ آماده دانلود"; $("#downloadBtn").disabled = false; $("#resultActions").hidden = false; log("ویدئوی نهایی با موفقیت ساخته شد.", "success");
-  } catch (e) { $("#overallState").textContent = "● خطا"; setProgress(0, "ساخت ناموفق بود", e.message || "خطای ناشناخته"); log(`رندر ناموفق بود: ${e.message || e}`, "error"); }
+    const previewUrl = URL.createObjectURL(state.lastVideo);
+    $("#stage").innerHTML = `<video class="final-preview" controls playsinline preload="metadata"></video>`;
+    const preview = $("#stage video"); preview.src = previewUrl;
+    setStage(4, "done"); setStage(5, "done"); setProgress(100, t("done"), "ویدئوی نهایی آماده است؛ می‌توانی همین‌جا ببینی یا دانلود کنی."); $("#outputState").textContent = "✓ آماده دانلود"; $("#downloadBtn").disabled = false; $("#resultActions").hidden = false; log("ویدئوی نهایی با موفقیت ساخته شد و پیش‌نمایش آماده است.", "success");
+  } catch (e) {
+    const message = friendlyRenderError(e);
+    $("#overallState").textContent = "● خطا";
+    setProgress(0, "ساخت ناموفق بود", message);
+    log(`رندر ناموفق بود: ${message}`, "error");
+  }
   finally { state.busy = false; $("#renderBtn").disabled = false; }
 };
 
@@ -309,6 +317,8 @@ async function renderVideo(voiceBlob) {
   }
   const stream = new MediaStream([...videoStream.getVideoTracks(), ...(dest ? dest.stream.getAudioTracks() : [])]);
   let mime = "video/webm;codecs=vp9,opus"; if (!MediaRecorder.isTypeSupported(mime)) mime = "video/webm;codecs=vp8,opus"; if (!MediaRecorder.isTypeSupported(mime)) mime = "video/webm";
+  if (!window.MediaRecorder) throw new Error("مرورگر فعلی ساخت ویدئو را پشتیبانی نمی‌کند. لطفاً آخرین نسخه Chrome را امتحان کن.");
+  if (!canvas.captureStream) throw new Error("مرورگر فعلی ضبط Canvas را پشتیبانی نمی‌کند. لطفاً Chrome را به‌روز کن.");
   const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6000000, audioBitsPerSecond: 128000 });
   const chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
   const done = new Promise((resolve, reject) => { rec.onstop = () => resolve(new Blob(chunks, { type: mime })); rec.onerror = e => reject(e.error || new Error("MediaRecorder error")); });
@@ -316,8 +326,30 @@ async function renderVideo(voiceBlob) {
 
   const media = [];
   for (const f of state.assets) {
-    if (f.type.startsWith("image/")) { const im = new Image(); im.src = URL.createObjectURL(f); await new Promise((r,j) => { im.onload=r; im.onerror=j; }); media.push({type:"image",el:im}); }
-    else if (f.type.startsWith("video/")) { const v = document.createElement("video"); v.src=URL.createObjectURL(f); v.muted=true; v.playsInline=true; await new Promise((r,j)=>{v.onloadedmetadata=r;v.onerror=j}); media.push({type:"video",el:v}); }
+    const objectUrl = URL.createObjectURL(f);
+    try {
+      if (f.type.startsWith("image/")) {
+        const im = new Image();
+        im.decoding = "async";
+        await new Promise((resolve, reject) => {
+          im.onload = () => resolve();
+          im.onerror = () => reject(new Error(`خواندن تصویر «${f.name}» ناموفق بود. فرمت فایل را بررسی کن.`));
+          im.src = objectUrl;
+        });
+        media.push({type:"image",el:im,name:f.name});
+      } else if (f.type.startsWith("video/")) {
+        const v = document.createElement("video");
+        v.src = objectUrl; v.muted = true; v.playsInline = true; v.preload = "metadata";
+        await new Promise((resolve, reject) => {
+          v.onloadedmetadata = () => resolve();
+          v.onerror = () => reject(new Error(`خواندن ویدئوی «${f.name}» ناموفق بود. MP4 با H.264 یا WebM را امتحان کن.`));
+        });
+        media.push({type:"video",el:v,name:f.name});
+      }
+    } catch (err) {
+      URL.revokeObjectURL(objectUrl);
+      throw err;
+    }
   }
   const lines = state.script.split(/\n+/).map(x => x.trim()).filter(Boolean);
   const start = performance.now(), total = state.duration * 1000, brand = $("#brand").value.trim();
@@ -342,6 +374,15 @@ async function renderVideo(voiceBlob) {
     if(elapsed<total) requestAnimationFrame(draw); else { rec.stop(); voiceSource?.stop(); musicSource?.stop(); audioCtx?.close(); media.filter(x=>x.type==="video").forEach(x=>x.el.pause()); }
   }
   requestAnimationFrame(draw); return done;
+}
+
+
+function friendlyRenderError(error) {
+  const raw = error?.message ? String(error.message) : String(error || "");
+  if (!raw || raw === "[object Event]") return "یکی از فایل‌های رسانه‌ای خوانده نشد. یک MP4 یا JPG/PNG دیگر امتحان کن.";
+  if (/decodeAudioData|EncodingError|DataCloneError/i.test(raw)) return "فایل صوتی قابل خواندن نیست. موسیقی را به MP3 یا WAV تبدیل کن و دوباره امتحان کن.";
+  if (/MediaRecorder|captureStream/i.test(raw)) return "مرورگر نتوانست ویدئو را ضبط کند. آخرین نسخه Chrome را امتحان کن.";
+  return raw;
 }
 
 function hexAlpha(hex,a){const h=hex.replace("#",""); const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16); return `rgba(${r},${g},${b},${a})`;}
