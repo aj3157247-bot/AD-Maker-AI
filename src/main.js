@@ -283,7 +283,11 @@ $("#renderBtn").onclick = async () => {
     state.lastVideo = await renderVideo(state.voiceBlob);
     const previewUrl = URL.createObjectURL(state.lastVideo);
     $("#stage").innerHTML = `<video class="final-preview" controls playsinline preload="metadata"></video>`;
-    const preview = $("#stage video"); preview.src = previewUrl;
+    const preview = $("#stage video");
+    preview.src = previewUrl;
+    preview.load();
+    preview.addEventListener("error", () => log("مرورگر نتوانست فایل ویدئوی نهایی را پخش کند. فایل را دانلود و با VLC یا پخش‌کننده دیگری باز کن.", "error"), { once: true });
+    // Do not force autoplay on mobile; the user can press play safely.
     setStage(4, "done"); setStage(5, "done"); setProgress(100, t("done"), "ویدئوی نهایی آماده است؛ می‌توانی همین‌جا ببینی یا دانلود کنی."); $("#outputState").textContent = "✓ آماده دانلود"; $("#downloadBtn").disabled = false; $("#resultActions").hidden = false; log("ویدئوی نهایی با موفقیت ساخته شد و پیش‌نمایش آماده است.", "success");
   } catch (e) {
     const message = friendlyRenderError(e);
@@ -292,6 +296,23 @@ $("#renderBtn").onclick = async () => {
     log(`رندر ناموفق بود: ${message}`, "error");
   }
   finally { state.busy = false; $("#renderBtn").disabled = false; }
+};
+
+$("#downloadBtn").onclick = () => {
+  if (!state.lastVideo || !state.lastVideo.size) {
+    log("فایل خروجی هنوز آماده دانلود نیست.", "error");
+    return;
+  }
+  const url = URL.createObjectURL(state.lastVideo);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ad-maker-ai-${Date.now()}.webm`;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  log("دانلود ویدئوی نهایی شروع شد.", "success");
 };
 
 $("#rerenderBtn").onclick = () => $("#renderBtn").click();
@@ -304,78 +325,224 @@ $("#helpBtn").onclick = () => alert("۱) اطلاعات محصول را وارد
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function renderVideo(voiceBlob) {
-  const W = 720, H = 1280, canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext("2d"); $("#stage").innerHTML = ""; $("#stage").append(canvas);
-  const fps = 30, videoStream = canvas.captureStream(fps);
-  let audioCtx = null, dest = null, voiceSource = null, musicSource = null;
-  if (voiceBlob || $("#music").files[0]) {
-    audioCtx = new AudioContext(); dest = audioCtx.createMediaStreamDestination();
-    if (voiceBlob) { const buf = await audioCtx.decodeAudioData(await voiceBlob.arrayBuffer()); voiceSource = audioCtx.createBufferSource(); voiceSource.buffer = buf; voiceSource.connect(dest); voiceSource.connect(audioCtx.destination); }
-    const music = $("#music").files[0];
-    if (music) { const buf = await audioCtx.decodeAudioData(await music.arrayBuffer()); musicSource = audioCtx.createBufferSource(); musicSource.buffer = buf; musicSource.loop = true; const gain = audioCtx.createGain(); gain.gain.value = .14; musicSource.connect(gain).connect(dest); musicSource.start(); }
-    if (voiceSource) voiceSource.start();
-  }
-  const stream = new MediaStream([...videoStream.getVideoTracks(), ...(dest ? dest.stream.getAudioTracks() : [])]);
-  let mime = "video/webm;codecs=vp9,opus"; if (!MediaRecorder.isTypeSupported(mime)) mime = "video/webm;codecs=vp8,opus"; if (!MediaRecorder.isTypeSupported(mime)) mime = "video/webm";
-  if (!window.MediaRecorder) throw new Error("مرورگر فعلی ساخت ویدئو را پشتیبانی نمی‌کند. لطفاً آخرین نسخه Chrome را امتحان کن.");
-  if (!canvas.captureStream) throw new Error("مرورگر فعلی ضبط Canvas را پشتیبانی نمی‌کند. لطفاً Chrome را به‌روز کن.");
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6000000, audioBitsPerSecond: 128000 });
-  const chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-  const done = new Promise((resolve, reject) => { rec.onstop = () => resolve(new Blob(chunks, { type: mime })); rec.onerror = e => reject(e.error || new Error("MediaRecorder error")); });
-  rec.start(250);
+  const W = 720, H = 1280;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) throw new Error("مرورگر نتوانست Canvas را آماده کند.");
+  if (!window.MediaRecorder) throw new Error("مرورگر فعلی ساخت ویدئو را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
+  if (!canvas.captureStream) throw new Error("مرورگر فعلی ضبط Canvas را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
 
+  // Load all media before recording. This prevents a partially-created/blank recording.
   const media = [];
+  const urls = [];
   for (const f of state.assets) {
     const objectUrl = URL.createObjectURL(f);
-    try {
-      if (f.type.startsWith("image/")) {
-        const im = new Image();
-        im.decoding = "async";
-        await new Promise((resolve, reject) => {
-          im.onload = () => resolve();
-          im.onerror = () => reject(new Error(`خواندن تصویر «${f.name}» ناموفق بود. فرمت فایل را بررسی کن.`));
-          im.src = objectUrl;
-        });
-        media.push({type:"image",el:im,name:f.name});
-      } else if (f.type.startsWith("video/")) {
-        const v = document.createElement("video");
-        v.src = objectUrl; v.muted = true; v.playsInline = true; v.preload = "metadata";
-        await new Promise((resolve, reject) => {
-          v.onloadedmetadata = () => resolve();
-          v.onerror = () => reject(new Error(`خواندن ویدئوی «${f.name}» ناموفق بود. MP4 با H.264 یا WebM را امتحان کن.`));
-        });
-        media.push({type:"video",el:v,name:f.name});
+    urls.push(objectUrl);
+    if (f.type.startsWith("image/")) {
+      const im = new Image();
+      im.decoding = "async";
+      await new Promise((resolve, reject) => {
+        im.onload = resolve;
+        im.onerror = () => reject(new Error(`خواندن تصویر «${f.name}» ناموفق بود. JPG یا PNG را امتحان کن.`));
+        im.src = objectUrl;
+      });
+      media.push({ type: "image", el: im, name: f.name, duration: 1 });
+    } else if (f.type.startsWith("video/")) {
+      const v = document.createElement("video");
+      v.src = objectUrl;
+      v.muted = true;
+      v.playsInline = true;
+      v.preload = "auto";
+      await new Promise((resolve, reject) => {
+        v.onloadeddata = resolve;
+        v.onerror = () => reject(new Error(`خواندن ویدئوی «${f.name}» ناموفق بود. MP4 با H.264 یا WebM را امتحان کن.`));
+        v.load();
+      });
+      media.push({ type: "video", el: v, name: f.name, duration: Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 1 });
+    }
+  }
+
+  let audioCtx = null, dest = null, voiceSource = null, musicSource = null;
+  try {
+    const music = $("#music").files[0];
+    if (voiceBlob || music) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) throw new Error("مرورگر صوت را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
+      audioCtx = new AC();
+      if (audioCtx.state === "suspended") await audioCtx.resume();
+      dest = audioCtx.createMediaStreamDestination();
+
+      if (voiceBlob) {
+        let buf;
+        try {
+          buf = await audioCtx.decodeAudioData(await voiceBlob.arrayBuffer());
+        } catch (_) {
+          throw new Error("صدای گویندگی قابل خواندن نیست. دوباره گویندگی را بساز.");
+        }
+        voiceSource = audioCtx.createBufferSource();
+        voiceSource.buffer = buf;
+        voiceSource.connect(dest);
+        // Local monitor is intentionally disabled: it can cause echo while recording.
       }
-    } catch (err) {
-      URL.revokeObjectURL(objectUrl);
-      throw err;
-    }
-  }
-  const lines = state.script.split(/\n+/).map(x => x.trim()).filter(Boolean);
-  const start = performance.now(), total = state.duration * 1000, brand = $("#brand").value.trim();
 
-  function draw(now) {
-    const elapsed = now - start, p = Math.min(1, elapsed / total), idx = Math.min(Math.max(lines.length - 1, 0), Math.floor(p * Math.max(lines.length,1)));
-    ctx.clearRect(0,0,W,H); ctx.fillStyle="#050507"; ctx.fillRect(0,0,W,H);
-    const item = media.length ? media[idx % media.length] : null;
-    if (item) {
-      const el=item.el;
-      if(item.type==="video" && el.paused) { el.currentTime = (p * (el.duration || 1)) % (el.duration || 1); el.play().catch(()=>{}); }
-      const ew=el.videoWidth||el.naturalWidth||W, eh=el.videoHeight||el.naturalHeight||H, s=Math.max(W/ew,H/eh), iw=ew*s, ih=eh*s, zoom=1+.025*Math.sin(p*Math.PI*4);
-      ctx.globalAlpha=.78; ctx.drawImage(el,(W-iw*zoom)/2,(H-ih*zoom)/2,iw*zoom,ih*zoom); ctx.globalAlpha=1;
+      if (music) {
+        let buf;
+        try {
+          buf = await audioCtx.decodeAudioData(await music.arrayBuffer());
+        } catch (_) {
+          throw new Error("فایل موسیقی قابل خواندن نیست. MP3 یا WAV را امتحان کن.");
+        }
+        musicSource = audioCtx.createBufferSource();
+        musicSource.buffer = buf;
+        musicSource.loop = true;
+        const gain = audioCtx.createGain();
+        gain.gain.value = 0.12;
+        musicSource.connect(gain).connect(dest);
+      }
     }
-    const grad=ctx.createLinearGradient(0,0,0,H); grad.addColorStop(0,hexAlpha(state.brandColor,.55)); grad.addColorStop(.45,"rgba(0,0,0,.18)"); grad.addColorStop(1,"rgba(0,0,0,.92)"); ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
-    ctx.direction=state.language==="en"?"ltr":"rtl"; ctx.textAlign="center";
-    ctx.fillStyle="#fff"; ctx.font="900 44px Vazirmatn,Arial"; ctx.fillText(brand,W/2,150);
-    ctx.fillStyle="#fff"; ctx.font="800 31px Vazirmatn,Arial"; wrap(ctx,lines[idx]||brand,W/2,560,600,52,5);
-    ctx.fillStyle="#ddd4ff"; ctx.font="600 19px Vazirmatn,Arial"; ctx.fillText("AD Maker AI",W/2,1195);
-    ctx.fillStyle="#fff"; ctx.fillRect(70,1220,(W-140)*p,5);
-    setProgress(66 + p*32, "رندر ویدئو", `${Math.round(p*100)}٪ از زمان ویدئو رندر شد`);
-    if(elapsed<total) requestAnimationFrame(draw); else { rec.stop(); voiceSource?.stop(); musicSource?.stop(); audioCtx?.close(); media.filter(x=>x.type==="video").forEach(x=>x.el.pause()); }
+
+    const videoStream = canvas.captureStream(30);
+    const tracks = [...videoStream.getVideoTracks()];
+    if (dest) tracks.push(...dest.stream.getAudioTracks());
+    const stream = new MediaStream(tracks);
+
+    const candidates = [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm"
+    ];
+    const mime = candidates.find(x => MediaRecorder.isTypeSupported(x));
+    if (!mime) throw new Error("این مرورگر قالب خروجی WebM را پشتیبانی نمی‌کند. آخرین Chrome را امتحان کن.");
+
+    const rec = new MediaRecorder(stream, {
+      mimeType: mime,
+      videoBitsPerSecond: 5000000,
+      audioBitsPerSecond: 128000
+    });
+    const chunks = [];
+    const done = new Promise((resolve, reject) => {
+      rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onerror = e => reject(e.error || new Error("MediaRecorder error"));
+      rec.onstop = () => {
+        const blob = new Blob(chunks, { type: mime });
+        if (!blob.size) reject(new Error("فایل ویدئو خالی ساخته شد."));
+        else resolve(blob);
+      };
+    });
+
+    const lines = state.script.split(/\n+/).map(x => x.trim()).filter(Boolean);
+    const total = Math.max(3, Number(state.duration) || 15) * 1000;
+    const brand = $("#brand").value.trim();
+    const start = performance.now();
+    let started = false;
+
+    // Draw one complete frame immediately so the recording never starts with a blank canvas.
+    const drawFrame = (elapsed) => {
+      const p = Math.min(1, elapsed / total);
+      const lineIndex = Math.min(Math.max(lines.length - 1, 0), Math.floor(p * Math.max(lines.length, 1)));
+      const item = media.length ? media[lineIndex % media.length] : null;
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "#050507";
+      ctx.fillRect(0, 0, W, H);
+
+      if (item) {
+        const el = item.el;
+        if (item.type === "video") {
+          const duration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : item.duration;
+          const sceneP = (p * media.length) % 1;
+          const target = Math.min(Math.max(0, sceneP * duration), Math.max(0, duration - 0.05));
+          // Keep the video moving while it is used as a scene.
+          if (Math.abs((el.currentTime || 0) - target) > 0.20) {
+            try { el.currentTime = target; } catch (_) {}
+          }
+          if (el.paused) el.play().catch(() => {});
+        }
+
+        const ew = el.videoWidth || el.naturalWidth || W;
+        const eh = el.videoHeight || el.naturalHeight || H;
+        const cover = Math.max(W / ew, H / eh);
+        const sceneP = (p * media.length) % 1;
+        const zoom = 1 + 0.08 * sceneP;
+        const iw = ew * cover * zoom;
+        const ih = eh * cover * zoom;
+        const drift = Math.sin(sceneP * Math.PI * 2) * 14;
+        ctx.globalAlpha = 0.96;
+        ctx.drawImage(el, (W - iw) / 2 + drift, (H - ih) / 2, iw, ih);
+        ctx.globalAlpha = 1;
+      }
+
+      // Cinematic overlays and a visible progress animation make a single image behave like a real video scene.
+      const grad = ctx.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, hexAlpha(state.brandColor, .72));
+      grad.addColorStop(.34, "rgba(0,0,0,.08)");
+      grad.addColorStop(.68, "rgba(0,0,0,.24)");
+      grad.addColorStop(1, "rgba(0,0,0,.94)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.direction = state.language === "en" ? "ltr" : "rtl";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#fff";
+      ctx.font = "900 44px Vazirmatn,Arial";
+      ctx.fillText(brand, W / 2, 150);
+
+      ctx.fillStyle = "#fff";
+      ctx.font = "800 31px Vazirmatn,Arial";
+      wrap(ctx, lines[lineIndex] || brand, W / 2, 560, 600, 52, 5);
+
+      ctx.fillStyle = "rgba(255,255,255,.86)";
+      ctx.font = "600 18px Vazirmatn,Arial";
+      ctx.fillText(`${Math.round(p * 100)}%`, W / 2, 1160);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(70, 1205, (W - 140) * p, 5);
+      ctx.fillStyle = "#ddd4ff";
+      ctx.font = "600 19px Vazirmatn,Arial";
+      ctx.fillText("AD Maker AI", W / 2, 1240);
+
+      setProgress(66 + p * 32, "رندر ویدئو", `${Math.round(p * 100)}٪ از ویدئو ساخته شد`);
+    };
+
+    drawFrame(0);
+    // Start audio and recording only after the first valid frame exists.
+    if (voiceSource) voiceSource.start(0);
+    if (musicSource) musicSource.start(0);
+    rec.start(250);
+    started = true;
+
+    await new Promise((resolve, reject) => {
+      let raf = 0;
+      const tick = now => {
+        try {
+          const elapsed = now - start;
+          drawFrame(elapsed);
+          if (elapsed < total) raf = requestAnimationFrame(tick);
+          else {
+            cancelAnimationFrame(raf);
+            // Keep the final frame in the recording for a short moment.
+            setTimeout(() => { if (rec.state !== "inactive") rec.stop(); resolve(); }, 120);
+          }
+        } catch (e) {
+          cancelAnimationFrame(raf);
+          if (rec.state !== "inactive") rec.stop();
+          reject(e);
+        }
+      };
+      raf = requestAnimationFrame(tick);
+    });
+
+    const blob = await done;
+    if (blob.size < 10000) throw new Error("فایل ویدئو بسیار کوچک یا خالی ساخته شد. دوباره تلاش کن.");
+    return blob;
+  } finally {
+    try { voiceSource?.stop(); } catch (_) {}
+    try { musicSource?.stop(); } catch (_) {}
+    try { await audioCtx?.close(); } catch (_) {}
+    media.filter(x => x.type === "video").forEach(x => { try { x.el.pause(); } catch (_) {} });
+    urls.forEach(u => URL.revokeObjectURL(u));
   }
-  requestAnimationFrame(draw); return done;
 }
-
 
 function friendlyRenderError(error) {
   const raw = error?.message ? String(error.message) : String(error || "");
