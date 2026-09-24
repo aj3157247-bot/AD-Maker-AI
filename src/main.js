@@ -355,34 +355,37 @@ async function renderVideo(voiceBlob) {
   if (!window.MediaRecorder) throw new Error("مرورگر فعلی ساخت ویدئو را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
   if (!canvas.captureStream) throw new Error("مرورگر فعلی ضبط Canvas را پشتیبانی نمی‌کند. Chrome را به‌روز کن.");
 
-  // Load all media before recording. This prevents a partially-created/blank recording.
+  // Load media without trusting File.type. Some Android gallery/file providers return
+  // an empty or incorrect MIME type even for a valid JPG/PNG. We first try the
+  // browser image decoder, then the video decoder for unknown files.
   const media = [];
   const urls = [];
   for (const f of state.assets) {
     const objectUrl = URL.createObjectURL(f);
     urls.push(objectUrl);
-    if (f.type.startsWith("image/")) {
+    const kind = await detectMediaKind(f, objectUrl);
+
+    if (kind === "image") {
       const im = new Image();
       im.decoding = "async";
-      await new Promise((resolve, reject) => {
-        im.onload = resolve;
-        im.onerror = () => reject(new Error(`خواندن تصویر «${f.name}» ناموفق بود. JPG یا PNG را امتحان کن.`));
-        im.src = objectUrl;
-      });
+      im.src = objectUrl;
+      await waitForImage(im, f.name);
       media.push({ type: "image", el: im, name: f.name, duration: 1 });
-    } else if (f.type.startsWith("video/")) {
+      continue;
+    }
+
+    if (kind === "video") {
       const v = document.createElement("video");
       v.src = objectUrl;
       v.muted = true;
       v.playsInline = true;
       v.preload = "auto";
-      await new Promise((resolve, reject) => {
-        v.onloadeddata = resolve;
-        v.onerror = () => reject(new Error(`خواندن ویدئوی «${f.name}» ناموفق بود. MP4 با H.264 یا WebM را امتحان کن.`));
-        v.load();
-      });
+      await waitForVideo(v, f.name);
       media.push({ type: "video", el: v, name: f.name, duration: Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 1 });
+      continue;
     }
+
+    throw new Error(`فایل «${f.name}» یک تصویر یا ویدئوی قابل‌خواندن نیست. لطفاً JPG/PNG یا MP4 را انتخاب کن.`);
   }
 
   let audioCtx = null, dest = null, voiceSource = null, musicSource = null;
@@ -564,6 +567,48 @@ async function renderVideo(voiceBlob) {
     media.filter(x => x.type === "video").forEach(x => { try { x.el.pause(); } catch (_) {} });
     urls.forEach(u => URL.revokeObjectURL(u));
   }
+}
+
+async function detectMediaKind(file, objectUrl) {
+  const declared = String(file?.type || "").toLowerCase();
+  if (declared.startsWith("image/")) return "image";
+  if (declared.startsWith("video/")) return "video";
+
+  // Unknown MIME: test actual browser decoders instead of the filename/MIME.
+  const image = new Image();
+  image.src = objectUrl;
+  try { await waitForImage(image, file?.name || "فایل"); return "image"; } catch (_) {}
+
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "metadata";
+  video.src = objectUrl;
+  try { await waitForVideo(video, file?.name || "فایل", true); return "video"; } catch (_) {}
+  return "unknown";
+}
+
+function waitForImage(img, name) {
+  return new Promise((resolve, reject) => {
+    if (img.complete && img.naturalWidth > 0) return resolve();
+    const ok = () => { cleanup(); resolve(); };
+    const fail = () => { cleanup(); reject(new Error(`خواندن تصویر «${name}» ناموفق بود. فایل را دوباره از گالری انتخاب کن.`)); };
+    const cleanup = () => { img.removeEventListener("load", ok); img.removeEventListener("error", fail); };
+    img.addEventListener("load", ok, { once: true });
+    img.addEventListener("error", fail, { once: true });
+  });
+}
+
+function waitForVideo(video, name, metadataOnly = false) {
+  return new Promise((resolve, reject) => {
+    const event = metadataOnly ? "loadedmetadata" : "loadeddata";
+    const ok = () => { cleanup(); resolve(); };
+    const fail = () => { cleanup(); reject(new Error(`خواندن ویدئوی «${name}» ناموفق بود. MP4 با H.264 را امتحان کن.`)); };
+    const cleanup = () => { video.removeEventListener(event, ok); video.removeEventListener("error", fail); };
+    video.addEventListener(event, ok, { once: true });
+    video.addEventListener("error", fail, { once: true });
+    video.load();
+  });
 }
 
 function friendlyRenderError(error) {
