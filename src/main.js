@@ -197,11 +197,27 @@ function escapeHtml(v) { return String(v).replace(/[&<>"']/g, c => ({"&":"&amp;"
 function setStage(index, status = "active") {
   state.currentStage = index;
   $$(".pipeline-stage").forEach((el, i) => {
-    el.classList.toggle("active", i === index && status !== "done");
-    el.classList.toggle("done", i < index || (i === index && status === "done"));
+    const isCurrent = i === index;
+    const isDone = i < index || (isCurrent && status === "done");
+    const isError = isCurrent && status === "error";
+    el.classList.toggle("active", isCurrent && status !== "done" && status !== "error");
+    el.classList.toggle("done", isDone);
+    el.classList.toggle("error", isError);
     el.classList.toggle("waiting", i > index);
-    el.querySelector(".stage-check").textContent = i < index || (i === index && status === "done") ? "✓" : i === index ? "●" : "○";
+    el.querySelector(".stage-check").textContent = isError ? "!" : isDone ? "✓" : isCurrent ? "●" : "○";
   });
+}
+
+function animateProgress(from, to, durationMs, title, text) {
+  const start = performance.now();
+  setProgress(from, title, text);
+  const timer = setInterval(() => {
+    const elapsed = performance.now() - start;
+    const ratio = Math.min(1, elapsed / durationMs);
+    setProgress(from + (to - from) * ratio, title, text);
+    if (ratio >= 1) clearInterval(timer);
+  }, 500);
+  return () => clearInterval(timer);
 }
 
 function resetPipeline() {
@@ -479,7 +495,11 @@ async function analyzeUploadedVideo() {
       log(`تحلیل ویدئو کامل شد: ${scenes.length} بخش مهم شناسایی شد.`, "success");
       scenes.slice(0, 8).forEach((scene, i) => log(`${String(i + 1).padStart(2, "0")} · ${scene.start || ""}${scene.end ? `–${scene.end}` : ""} · ${scene.title || scene.description || "بخش ویدئو"}`));
     } else log("تحلیل ویدئو کامل شد و سناریوی مبتنی بر محتوای واقعی آماده است.", "success");
-    setProgress(42, "سناریو آماده", "سناریو بر اساس بخش‌های واقعی ویدئو آماده شد.");
+    // Video analysis belongs to stage 1 (information/media preparation).
+    // Mark it complete before the script stage starts so the UI never shows
+    // a misleading 42% with stage 01 still active.
+    setStage(0, "done");
+    setProgress(18, "اطلاعات آماده", "تحلیل ویدئو کامل شد؛ حالا سناریو ساخته می‌شود.");
     return result;
   } catch (e) {
     const detail = String(e?.message || e);
@@ -628,7 +648,7 @@ $("#scriptBtn").onclick = async () => {
   $("#overallState").textContent = "● در حال تولید";
 
   try {
-    setStage(0); setProgress(10, "تحلیل پروژه", t("analyze")); log(`شروع پروژه «${brand}» با ${state.assets.length} رسانه.`); await wait(250);
+    setStage(0); setProgress(8, "اطلاعات", t("analyze")); log(`شروع پروژه «${brand}» با ${state.assets.length} رسانه.`); await wait(250);
     if (state.assets.length) log(t("mediaReady"), "success"); else log(t("noMedia"));
 
     let videoAnalysis = state.videoAnalysis;
@@ -636,7 +656,9 @@ $("#scriptBtn").onclick = async () => {
       try { videoAnalysis = await analyzeUploadedVideo(); }
       catch (_) { log("تحلیل ویدئو در دسترس نبود؛ سناریو با اطلاعات متنی ادامه پیدا می‌کند.", "info"); }
     }
-    setStage(1); setProgress(25, "آماده‌سازی سناریو", state.scriptMode === "manual" ? "سناریوی اختصاصی تو آماده می‌شود." : state.scriptMode === "hybrid" ? "AI سناریوی تو را حرفه‌ای‌تر و منسجم‌تر می‌کند." : t("script"));
+    // Stage 01 is now genuinely complete before stage 02 becomes active.
+    setStage(0, "done");
+    setStage(1); setProgress(22, "سناریو", state.scriptMode === "manual" ? "سناریوی اختصاصی تو آماده می‌شود." : state.scriptMode === "hybrid" ? "AI سناریوی تو را حرفه‌ای‌تر و منسجم‌تر می‌کند." : t("script"));
     let j;
     if (state.scriptMode === "manual") {
       j = { script: customScript, fallback: false, provider: "user" };
@@ -664,9 +686,14 @@ $("#scriptBtn").onclick = async () => {
     log(`${actualWords} کلمه برای ویدئوی ${Math.round(state.duration / 60) >= 1 ? `${Math.round(state.duration / 60)} دقیقه` : `${state.duration} ثانیه`} آماده شد؛ هدف تقریبی ${expectedWords} کلمه است.`, actualWords >= Math.round(expectedWords * 0.72) ? "success" : "info");
     log(state.scriptMode === "manual" ? "سناریوی اختصاصی آماده شد." : state.scriptMode === "hybrid" ? "سناریو با همکاری کاربر و AI آماده شد." : (j.fallback ? t("fallback") : "سناریوی هوشمند با موفقیت دریافت شد."), j.fallback ? "info" : "success");
     setStage(1, "done");
+    setProgress(40, "سناریو آماده", "سناریو کامل شد؛ مرحله گویندگی شروع می‌شود.");
+    log("مرحله سناریو با موفقیت کامل شد و تیک خورد.", "success");
 
-    setStage(2); setProgress(42, "گویندگی", t("voice")); log("درخواست ساخت گویندگی ارسال شد.");
+    setStage(2);
+    const stopVoiceProgress = animateProgress(42, 50, 120000, "گویندگی", t("voice"));
+    log("مرحله گویندگی شروع شد؛ در حال دریافت صدای AI از ElevenLabs...");
     const voice = await getVoice();
+    stopVoiceProgress();
     if (!voice) {
       setStage(2, "error");
       setProgress(50, "گویندگی ناموفق بود", "برای ساخت ویدئوی دارای صدا، اتصال ElevenLabs را بررسی کن و دوباره ساخت تبلیغ را بزن.");
@@ -678,8 +705,9 @@ $("#scriptBtn").onclick = async () => {
     }
     setStage(2, "done"); setProgress(52, "گویندگی آماده", t("voiceReady")); log(t("voiceReady"), "success");
 
-    setStage(3); setProgress(58, "آماده‌سازی صحنه‌ها", "رسانه‌ها، متن و رنگ برند برای ویدئو چیده می‌شوند..."); log("صحنه‌بندی تبلیغ آماده می‌شود."); await wait(350); setStage(3, "done");
-    $("#renderBtn").disabled = false; state.generated = true; $("#overallState").textContent = "● آماده رندر با صدا"; setProgress(62, "آماده رندر", "سناریو و گویندگی آماده‌اند. خروجی نهایی با صدا ساخته می‌شود."); log("پروژه برای رندر نهایی آماده است.", "success");
+    setStage(3); setProgress(55, "صحنه‌ها", "رسانه‌ها، متن و رنگ برند برای ویدئو چیده می‌شوند..."); log("مرحله صحنه‌ها شروع شد."); await wait(350); setStage(3, "done");
+    setProgress(62, "صحنه‌ها آماده", "سناریو، گویندگی و صحنه‌بندی کامل شد؛ آماده رندر نهایی.");
+    $("#renderBtn").disabled = false; state.generated = true; $("#overallState").textContent = "● آماده رندر با صدا"; log("پروژه برای رندر نهایی آماده است.", "success");
   } finally { state.busy = false; $("#scriptBtn").disabled = false; }
 };
 
