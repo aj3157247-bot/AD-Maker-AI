@@ -54,33 +54,72 @@ async function tts(request,env){
   if(!b.text)return json({audio:null,error:"text_required"},400);
   if(!env.ELEVENLABS_API_KEY)return json({audio:null,error:"elevenlabs_key_missing"},503);
 
-  const voice=env.ELEVENLABS_VOICE_ID||"21m00Tcm4TlvDq8ikWAM";
   const languageCode=b.language==="ps"?"ps":b.language==="en"?"en":"fa";
+  const voice = await chooseVoice(env, languageCode);
+  if(!voice) return json({audio:null,error:"elevenlabs_voice_not_found",language:languageCode},502);
 
-  // Use Eleven v3: unlike multilingual v2, v3 supports Persian and Pashto.
-  const r=await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`,{
+  const payload={
+    text:String(b.text).slice(0,3000),
+    model_id:"eleven_v3",
+    language_code:languageCode,
+    output_format:"mp3_44100_128"
+  };
+
+  let r=await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}`,{
    method:"POST",
    headers:{"xi-api-key":env.ELEVENLABS_API_KEY,"Content-Type":"application/json","Accept":"audio/mpeg"},
-   body:JSON.stringify({
-    text:b.text,
-    model_id:"eleven_v3",
-    language_code:languageCode
-   })
+   body:JSON.stringify(payload)
   });
 
   if(!r.ok){
-   let detail="";
-   try{ detail=(await r.text()).slice(0,500); }catch(_){}
-   return json({audio:null,error:"elevenlabs_tts_failed",status:r.status,detail},502);
+   const info=await elevenError(r);
+   return json({audio:null,error:mapElevenError(r.status,info.code),status:r.status,detail:info.message||info.code||"ElevenLabs request failed",voice,language:languageCode},502);
   }
 
   const buf=await r.arrayBuffer();
   if(!buf.byteLength)return json({audio:null,error:"empty_audio"},502);
-  return json({audio:arrayBufferToBase64(buf),mime:r.headers.get("content-type")||"audio/mpeg",fallback:false,model:"eleven_v3",language:languageCode});
+  return json({audio:arrayBufferToBase64(buf),mime:"audio/mpeg",fallback:false,model:"eleven_v3",language:languageCode,voice});
  }catch(e){
   return json({audio:null,error:"tts_request_failed",detail:String(e?.message||e)},502);
  }
 }
+
+async function chooseVoice(env, languageCode){
+  if(env.ELEVENLABS_VOICE_ID) return env.ELEVENLABS_VOICE_ID;
+  try{
+    const r=await fetch(`https://api.elevenlabs.io/v2/voices?language=${encodeURIComponent(languageCode)}&page_size=20`,{
+      headers:{"xi-api-key":env.ELEVENLABS_API_KEY,"Accept":"application/json"}
+    });
+    if(r.ok){
+      const j=await r.json();
+      const voices=Array.isArray(j?.voices)?j.voices:[];
+      const match=voices.find(v=>(v.verified_languages||[]).some(x=>x?.language===languageCode));
+      if(match?.voice_id) return match.voice_id;
+      if(voices[0]?.voice_id) return voices[0].voice_id;
+    }
+  }catch(_){ }
+  // Documented ElevenLabs example voice; used only when no account-specific voice is available.
+  return "JBFqnCBsd6RMkjVDRZzb";
+}
+
+async function elevenError(r){
+ try{
+  const j=await r.json();
+  const d=j?.detail||{};
+  return {code:d.code||d.status||d.type||"",message:d.message||j?.message||""};
+ }catch(_){
+  try{return {message:(await r.text()).slice(0,300)}}catch(__){return {}};
+ }
+}
+function mapElevenError(status,code){
+ if(status===401||code==="invalid_api_key"||code==="authentication_error") return "elevenlabs_invalid_api_key";
+ if(status===402||code==="payment_required"||code==="quota_exceeded") return "elevenlabs_quota_exceeded";
+ if(status===403||code==="authorization_error") return "elevenlabs_permission_denied";
+ if(status===404||code==="voice_not_found") return "elevenlabs_voice_not_found";
+ if(status===429||code==="rate_limit_error") return "elevenlabs_rate_limited";
+ return "elevenlabs_tts_failed";
+}
+
 function arrayBufferToBase64(buf){let s="",a=new Uint8Array(buf);const chunk=0x8000;for(let i=0;i<a.length;i+=chunk)s+=String.fromCharCode(...a.subarray(i,i+chunk));return btoa(s)}
 function fallback(b){
  if(b.language==="en")return `${b.brand}. ${b.description}. Discover it, try it and share it. ${b.brand} — simple, fast and made for you.`;
