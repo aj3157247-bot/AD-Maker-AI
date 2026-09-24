@@ -289,7 +289,20 @@ async function getVoice() {
     }
     log(`ElevenLabs گویندگی تولید نکرد (${j.error || "خطای نامشخص"}).`, "error");
   } catch (e) {
-    log("ارتباط با سرویس گویندگی موفق نشد. کلید ElevenLabs و تنظیمات Cloudflare را بررسی کن.", "error");
+    let detail = String(e?.message || e || "خطای نامشخص");
+    try {
+      const parsed = JSON.parse(detail);
+      const code = parsed?.error || parsed?.code || "";
+      const map = {
+        elevenlabs_invalid_api_key: "کلید ElevenLabs معتبر نیست.",
+        elevenlabs_quota_exceeded: "اعتبار/سهمیه ElevenLabs کافی نیست.",
+        elevenlabs_permission_denied: "کلید ElevenLabs اجازه Text to Speech ندارد.",
+        elevenlabs_voice_not_found: "صدای انتخاب‌شده در ElevenLabs پیدا نشد.",
+        elevenlabs_rate_limited: "درخواست‌های ElevenLabs بیش از حد شده؛ کمی بعد دوباره امتحان کن."
+      };
+      detail = map[code] || parsed?.detail || detail;
+    } catch (_) {}
+    log(`گویندگی ساخته نشد: ${detail}`, "error");
   }
   $("#voiceState").textContent = "گویندگی آماده نیست";
   $("#voiceDetail").textContent = "خروجی بی‌صدا مجاز نیست";
