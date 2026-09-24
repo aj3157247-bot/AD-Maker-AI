@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "2.3.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "2.4.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
@@ -17,15 +17,16 @@ async function generateScript(request, env) {
 
     const duration = Math.max(15, Math.min(300, Number(b.duration) || 15));
     const targetWords = Math.max(35, Math.min(900, Number(b.targetWords) || Math.round(duration * 2.2)));
-    const lang = b.language === "ps" ? "natural Afghan Pashto" : b.language === "en" ? "English" : "natural Afghan Dari";
-    const style = b.style || "cinematic";
+    const languageNames = { en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian", ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" };
+    const lang = languageNames[b.language] || "Persian";
+    const style = b.style || "YouTube Shorts";
 
     const prompt = `You are an expert advertising copywriter creating a complete voice-over for an Afghanistan-focused product advertisement.
 
 Brand/product: ${b.brand}
 User-provided description: ${b.description}
 Language: ${lang}
-Style: ${style}
+Target platform: ${style}
 Target video duration: ${duration} seconds (${Math.floor(duration / 60)} minutes ${duration % 60} seconds)
 Target spoken length: approximately ${targetWords} words.
 
@@ -33,7 +34,7 @@ Write a professional, natural voice-over that is long enough to fill the request
 
 Requirements:
 - Return ONLY the spoken script; no title, notes, labels, bullet points, scene directions or quotation marks.
-- Use natural Afghan Dari when requested, not Iranian-specific wording. Use natural Afghan Pashto when requested.
+- Use natural, native-sounding ${lang}. For Persian, use standard Persian rather than labeling it as Afghan Dari. For Pashto, use natural Pashto.
 - Keep sentences easy to narrate aloud and vary sentence length naturally.
 - Do not cram too many words into a sentence.
 - Build a clear opening hook, explanation, benefits, practical value, and ending call to action.
@@ -173,7 +174,9 @@ async function tts(request, env) {
     // ElevenLabs limits a single TTS request to 10,000 characters on this setup.
     // Long advertisements are therefore split into natural sentence/word chunks,
     // each rendered with the same voice/model. The browser joins the returned audio.
-    const chunks = splitTtsText(text, 8500);
+    // Eleven v3 currently has a 5,000-character per-request limit; keep a safe margin.
+    // Multilingual v2 accepts longer text, so the same chunks work for both models.
+    const chunks = splitTtsText(text, 4200);
     const configuredVoice = env.ELEVENLABS_VOICE_ID || '';
     const voices = [...new Set([configuredVoice, 'JBFqnCBsd6RMkjVDRZzb'].filter(Boolean))];
     const models = ['eleven_v3', 'eleven_multilingual_v2'];
@@ -184,7 +187,7 @@ async function tts(request, env) {
         const parts = [];
         let failed = false;
         for (let i = 0; i < chunks.length; i++) {
-          const result = await elevenLabsTTS(env.ELEVENLABS_API_KEY, voice, model, chunks[i]);
+          const result = await elevenLabsTTS(env.ELEVENLABS_API_KEY, voice, model, chunks[i], b.language);
           if (!result.ok) {
             lastError = result;
             failed = true;
@@ -264,8 +267,16 @@ function splitTtsText(text, maxChars = 8500) {
   return chunks.filter(Boolean);
 }
 
-async function elevenLabsTTS(apiKey, voice, model, text) {
+async function elevenLabsTTS(apiKey, voice, model, text, language) {
   try {
+    const languageCode = { en:"en", ar:"ar", tr:"tr", ur:"ur", hi:"hi", fa:"fa", ps:"ps", ru:"ru", es:"es", fr:"fr", de:"de", id:"id", uz:"uz" }[language] || null;
+    const body = {
+      text,
+      model_id: model,
+      voice_settings: { stability: 0.42, similarity_boost: 0.78, style: 0.25, use_speaker_boost: true }
+    };
+    // language_code is supported by v3; multilingual_v2 ignores it.
+    if (model === 'eleven_v3' && languageCode) body.language_code = languageCode;
     const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
       method: 'POST',
       headers: {
@@ -273,11 +284,7 @@ async function elevenLabsTTS(apiKey, voice, model, text) {
         'Content-Type': 'application/json',
         'Accept': 'audio/mpeg'
       },
-      body: JSON.stringify({
-        text,
-        model_id: model,
-        voice_settings: { stability: 0.42, similarity_boost: 0.78, style: 0.25, use_speaker_boost: true }
-      })
+      body: JSON.stringify(body)
     });
 
     if (r.ok) return { ok: true, audio: arrayBufferToBase64(await r.arrayBuffer()) };
