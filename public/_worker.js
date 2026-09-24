@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "2.5.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "2.6.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
@@ -191,14 +191,17 @@ async function tts(request, env) {
       for (const model of models) {
         const parts = [];
         let failed = false;
-        for (let i = 0; i < chunks.length; i++) {
-          const result = await elevenLabsTTS(env.ELEVENLABS_API_KEY, voice, model, chunks[i], b.language);
-          if (!result.ok) {
-            lastError = result;
-            failed = true;
-            break;
+        // Render at most two chunks at once. This keeps long ads fast without
+        // flooding ElevenLabs with a large burst of requests.
+        for (let start = 0; start < chunks.length && !failed; start += 2) {
+          const batch = chunks.slice(start, start + 2);
+          const results = await Promise.all(batch.map(chunk =>
+            elevenLabsTTS(env.ELEVENLABS_API_KEY, voice, model, chunk, b.language)
+          ));
+          for (const result of results) {
+            if (!result.ok) { lastError = result; failed = true; break; }
+            parts.push(result.audio);
           }
-          parts.push(result.audio);
         }
         if (!failed && parts.length) {
           if (parts.length === 1) {
@@ -282,15 +285,23 @@ async function elevenLabsTTS(apiKey, voice, model, text, language) {
     };
     // language_code is supported by v3; multilingual_v2 ignores it.
     if (model === 'eleven_v3' && languageCode) body.language_code = languageCode;
-    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
-      method: 'POST',
-      headers: {
-        'xi-api-key': apiKey,
-        'Content-Type': 'application/json',
-        'Accept': 'audio/mpeg'
-      },
-      body: JSON.stringify(body)
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+    let r;
+    try {
+      r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`, {
+        method: 'POST',
+        headers: {
+          'xi-api-key': apiKey,
+          'Content-Type': 'application/json',
+          'Accept': 'audio/mpeg'
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (r.ok) return { ok: true, audio: arrayBufferToBase64(await r.arrayBuffer()) };
 
@@ -305,7 +316,13 @@ async function elevenLabsTTS(apiKey, voice, model, text, language) {
       requestId: r.headers.get('request-id') || null
     };
   } catch (e) {
-    return { ok: false, status: 503, code: 'elevenlabs_network_error', message: String(e?.message || e) };
+    const timedOut = e?.name === 'AbortError';
+    return {
+      ok: false,
+      status: 504,
+      code: timedOut ? 'elevenlabs_timeout' : 'elevenlabs_network_error',
+      message: timedOut ? 'ElevenLabs پاسخ را در زمان مجاز برنگرداند.' : String(e?.message || e)
+    };
   }
 }
 
