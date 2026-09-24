@@ -352,7 +352,7 @@ $("#brandColor").oninput = e => { state.brandColor = e.target.value; $("#colorHe
 function updatePlatformUI() {
   const label = platformLabel(state.platform);
   const ratio = outputRatio(state.platform);
-  $(".style-chip").forEach(x => x.classList.toggle("active", x.dataset.style === state.platform));
+  $$(".style-chip[data-style]").forEach(x => x.classList.toggle("active", x.dataset.style === state.platform));
   $("#selectedPlatform").textContent = `${label} · ${ratio}`;
   $("#stageFormat").textContent = `خروجی ${ratio} با صدا و زیرنویس`;
 }
