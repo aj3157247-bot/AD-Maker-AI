@@ -225,7 +225,7 @@ function base64ToBlob(b64, mime) {
   return new Blob([a], { type: mime });
 }
 
-async function api(path, payload, timeoutMs = 120000) {
+async function api(path, payload, timeoutMs = 90000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -522,7 +522,7 @@ $("#scriptBtn").onclick = async () => {
 
 async function getVoice() {
   if ($("#voiceState")) $("#voiceState").textContent = "در حال ساخت";
-  $("#voiceDetail").textContent = "ElevenLabs v3";
+  $("#voiceDetail").textContent = "ElevenLabs";
   state.voiceBlob = null;
   state.voiceMode = "none";
   try {
@@ -542,7 +542,7 @@ async function getVoice() {
       state.voiceBlob = blob;
       state.voiceMode = "elevenlabs";
       if ($("#voiceState")) $("#voiceState").textContent = "گویندگی AI";
-      if ($("#voiceDetail")) $("#voiceDetail").textContent = `${j.model === "eleven_v3" ? "Eleven v3" : "Eleven Multilingual v2"} · ${languageLabel(state.language)} ✓`;
+      if ($("#voiceDetail")) $("#voiceDetail").textContent = `${j.model === "eleven_v3" ? "Eleven v3" : j.model === "eleven_flash_v2_5" ? "Eleven Flash v2.5" : "Eleven Multilingual v2"} · ${languageLabel(state.language)} ✓`;
       log(`گویندگی با موفقیت آماده شد${j.chunks > 1 ? ` (${j.chunks} بخش)` : ""}.`, "success");
       return blob;
     }
