@@ -357,39 +357,68 @@ function updatePlatformUI() {
   $("#stageFormat").textContent = `خروجی ${ratio} با صدا و زیرنویس`;
 }
 
-document.addEventListener("click", e => {
-  const platform = e.target.closest(".style-chip[data-style]");
-  if (platform) {
-    e.preventDefault();
-    state.style = platform.dataset.style;
-    state.platform = platform.dataset.style;
-    updatePlatformUI();
-    log(`پلتفرم خروجی روی «${platformLabel(state.platform)}» تنظیم شد.`, "success");
-    return;
-  }
-  const mode = e.target.closest(".scenario-mode[data-script-mode]");
-  if (mode) {
-    e.preventDefault();
-    state.scriptMode = mode.dataset.scriptMode;
-    $(".scenario-mode").forEach(x => x.classList.toggle("active", x === mode));
-    const custom = $("#customScriptWrap");
-    custom.hidden = state.scriptMode === "ai";
-    $("#scriptBtn").textContent = state.scriptMode === "manual" ? "✎ آماده‌سازی سناریوی من" : state.scriptMode === "hybrid" ? "✦+ پرداخت سناریو با AI" : "✦ ساخت سناریوی هوشمند";
-    return;
-  }
-  const view = e.target.closest(".view-tab[data-view]");
-  if (view) {
-    e.preventDefault();
-    state.activeView = view.dataset.view;
-    $(".view-tab").forEach(x => x.classList.toggle("active", x === view));
-    $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== state.activeView; });
-    $("#viewState").textContent = state.activeView === "library" ? "کتابخانه" : "استودیو";
-    if (state.activeView === "library") renderVideoLibrary();
-    const target = document.querySelector(`[data-workspace="${state.activeView}"]`);
-    target?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-});
+function bindChoiceControls() {
+  // Bind directly to each button. This is intentionally not delegated from document:
+  // on some Android WebViews/browsers a delegated click can be swallowed when cards
+  // contain nested text/inline elements. Direct handlers make every choice reliable.
+  $$(".style-chip[data-style]").forEach(button => {
+    button.type = "button";
+    button.setAttribute("aria-pressed", button.dataset.style === state.platform ? "true" : "false");
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      state.style = button.dataset.style;
+      state.platform = button.dataset.style;
+      updatePlatformUI();
+      $$(".style-chip[data-style]").forEach(x => x.setAttribute("aria-pressed", x === button ? "true" : "false"));
+      log(`پلتفرم خروجی روی «${platformLabel(state.platform)}» تنظیم شد.`, "success");
+    };
+  });
 
+  $$(".scenario-mode[data-script-mode]").forEach(button => {
+    button.type = "button";
+    button.setAttribute("aria-pressed", button.dataset.scriptMode === state.scriptMode ? "true" : "false");
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      state.scriptMode = button.dataset.scriptMode;
+      $$(".scenario-mode[data-script-mode]").forEach(x => {
+        const active = x === button;
+        x.classList.toggle("active", active);
+        x.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+      const custom = $("#customScriptWrap");
+      if (custom) custom.hidden = state.scriptMode === "ai";
+      const scriptBtn = $("#scriptBtn");
+      if (scriptBtn) scriptBtn.textContent = state.scriptMode === "manual" ? "✎ آماده‌سازی سناریوی من" : state.scriptMode === "hybrid" ? "✦+ پرداخت سناریو با AI" : "✦ ساخت سناریوی هوشمند";
+    };
+  });
+
+  $$(".view-tab[data-view]").forEach(button => {
+    button.type = "button";
+    button.setAttribute("aria-pressed", button.dataset.view === state.activeView ? "true" : "false");
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      state.activeView = button.dataset.view;
+      $$(".view-tab[data-view]").forEach(x => {
+        const active = x === button;
+        x.classList.toggle("active", active);
+        x.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+      $$(".workspace-panel[data-workspace]").forEach(x => {
+        x.hidden = x.dataset.workspace !== state.activeView;
+      });
+      const stateLabel = $("#viewState");
+      if (stateLabel) stateLabel.textContent = state.activeView === "library" ? "کتابخانه" : "استودیو";
+      if (state.activeView === "library") renderVideoLibrary();
+      const target = document.querySelector(`[data-workspace="${state.activeView}"]`);
+      if (target) setTimeout(() => target.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+    };
+  });
+}
+
+bindChoiceControls();
 updatePlatformUI();
 
 $("#demoBtn").onclick = () => {
