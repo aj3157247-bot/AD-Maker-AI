@@ -441,28 +441,39 @@ async function analyzeUploadedVideo() {
     const size = Number(video.size || 0);
     if (!size) throw new Error("حجم ویدئو معتبر نیست.");
     const mimeType = String(video.type || "video/mp4");
-    // For normal screen recordings (under 95MB), send the video once through the
-    // Pages Worker. This avoids the Gemini resumable-upload chunk handshake
-    // getting stuck behind a proxy on mobile networks. Cloudflare Free allows
-    // request bodies up to 100MB, so leave a small safety margin.
-    if (size <= 95 * 1024 * 1024) {
-      setProgress(15, "ارسال ویدئو", "ویدئو مستقیماً و یک‌باره به Gemini ارسال می‌شود…");
-      log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ حالت آپلود مستقیم فعال شد.`);
+    // IMPORTANT: for small videos use Interactions inline data directly.
+    // This completely bypasses the Files API URI and avoids the blob:// URI
+    // failure that can occur on some Gemini accounts/regions. Google documents
+    // inline video as the preferred path for small one-off clips.
+    let fileInfo = null;
+    let fileName = "";
+    if (size <= 20 * 1024 * 1024) {
+      setProgress(18, "آماده‌سازی ویدئو", "ویدئوی کوتاه برای Gemini آماده می‌شود…");
+      log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ مسیر مستقیم Interactions فعال شد تا خطای blob:// ایجاد نشود.`, "info");
+    } else if (size <= 95 * 1024 * 1024) {
+      setProgress(15, "ارسال ویدئو", "ویدئو به Files API Gemini ارسال می‌شود…");
+      log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ مسیر Files API فعال شد.`);
       const form = new FormData();
       form.append("video", video, video.name || "site-demo.mp4");
       setProgress(22, "ارسال ویدئو", "در حال ارسال فایل به Gemini…");
-      var fileInfo = await requestJson(`${window.location.origin}/api/analyze-video/upload`, {
+      fileInfo = await requestJson(`${window.location.origin}/api/analyze-video/upload`, {
         method: "POST",
         body: form
       }, 180000);
       setProgress(50, "ارسال ویدئو", "آپلود ویدئو به Gemini کامل شد.");
       log("مرحله ۱: ویدئو کامل به Gemini ارسال و ثبت شد.", "success");
+      fileName = fileInfo?.fileName || "";
+      if (!fileName) throw new Error("Gemini فایل نهایی را ثبت نکرد.");
     } else {
       throw new Error("این ویدئو بیشتر از 95MB است. برای تحلیل در این نسخه، لطفاً ویدئو را کمی فشرده‌تر کن و دوباره انتخاب کن.");
     }
 
-    const fileName = fileInfo?.fileName;
-    if (!fileName) throw new Error("Gemini فایل نهایی را ثبت نکرد.");
+    if (size <= 20 * 1024 * 1024) {
+      // Skip Files API status polling because there is no uploaded Gemini file.
+      // The inline Interaction itself becomes the processing job.
+      setProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده است؛ تحلیل سریع Gemini شروع می‌شود…");
+      log("مرحله ۲: مسیر مستقیم ویدئو آماده شد؛ بدون URI فایل Gemini تحلیل شروع می‌شود.", "success");
+    } else {
     let fileState = String(fileInfo.state || "PROCESSING").toUpperCase();
     let fileInfoCurrent = fileInfo;
     let polls = 0;
@@ -493,11 +504,10 @@ async function analyzeUploadedVideo() {
     setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
     log("مرحله ۳: تحلیل واقعی ویدئو با Gemini Interactions و اجرای پس‌زمینه شروع شد.");
     let started;
-    const currentUri = String(formStart.fileUri || "");
-    const useInlineFallback = currentUri.startsWith("blob:");
-    if (useInlineFallback && size <= 20 * 1024 * 1024) {
-      setProgress(68, "تحلیل محتوای ویدئو", "شناسه فایل Gemini قابل استفاده نبود؛ مسیر مستقیم ویدئو فعال شد…");
-      log("شناسه فایل Gemini به‌صورت blob برگشت؛ تحلیل مستقیم بدون URI شروع می‌شود.", "info");
+    if (size <= 20 * 1024 * 1024) {
+      // Small-video path: NEVER send fileUri/fileName. The video bytes are sent
+      // directly to the Interactions API, so a blob:// Files API URI cannot leak
+      // into the request.
       const inlineForm = new FormData();
       inlineForm.append("video", video, video.name || "site-demo.mp4");
       inlineForm.append("brand", $("#brand")?.value.trim() || "");
@@ -505,26 +515,16 @@ async function analyzeUploadedVideo() {
       inlineForm.append("language", state.language);
       inlineForm.append("duration", String(state.duration));
       inlineForm.append("platform", platformLabel(state.platform));
+      setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی مستقیم ویدئو است…");
+      log("تحلیل مستقیم Interactions شروع شد؛ Files API و blob:// برای این ویدئو استفاده نمی‌شود.", "success");
       started = await requestJson(`${window.location.origin}/api/analyze-video/start-inline`, { method: "POST", body: inlineForm }, 120000);
     } else {
+      // Large-video path: use the verified Files API URI. Never rewrite it into
+      // a blob:// value; Gemini expects the URI returned by Files API.
       try {
         started = await requestJson(`${window.location.origin}/api/analyze-video/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formStart) }, 60000);
       } catch (startError) {
-        const msg = String(startError?.message || startError);
-        if (size <= 20 * 1024 * 1024 && /unsupported file uri|unsupported.*uri|blob:\/\//i.test(msg)) {
-          setProgress(68, "تحلیل محتوای ویدئو", "مسیر جایگزین مستقیم فعال شد…");
-          log("Gemini URI قابل استفاده نبود؛ مسیر مستقیم ویدئو به‌صورت خودکار فعال شد.", "info");
-          const inlineForm = new FormData();
-          inlineForm.append("video", video, video.name || "site-demo.mp4");
-          inlineForm.append("brand", $("#brand")?.value.trim() || "");
-          inlineForm.append("description", $("#desc")?.value.trim() || "");
-          inlineForm.append("language", state.language);
-          inlineForm.append("duration", String(state.duration));
-          inlineForm.append("platform", platformLabel(state.platform));
-          started = await requestJson(`${window.location.origin}/api/analyze-video/start-inline`, { method: "POST", body: inlineForm }, 120000);
-        } else {
-          throw startError;
-        }
+        throw startError;
       }
     }
 
