@@ -482,7 +482,7 @@ async function analyzeUploadedVideo() {
       const canvas = document.createElement("canvas");
       const sourceW = el.videoWidth || 1280;
       const sourceH = el.videoHeight || 720;
-      const width = Math.min(720, sourceW);
+      const width = Math.min(560, sourceW);
       const height = Math.max(240, Math.round(width * sourceH / sourceW));
       canvas.width = width; canvas.height = height;
       const ctx = canvas.getContext("2d", { alpha: false });
@@ -491,7 +491,7 @@ async function analyzeUploadedVideo() {
         const time = count === 1 ? 0 : Math.min(Math.max(0, duration - 0.15), (duration * i) / (count - 1));
         await seek(time);
         ctx.drawImage(el, 0, 0, width, height);
-        const data = canvas.toDataURL("image/jpeg", 0.58);
+        const data = canvas.toDataURL("image/jpeg", 0.48);
         frames.push({ time: formatVideoTime(time), data });
       }
       return { frames, duration };
@@ -672,12 +672,12 @@ async function analyzeUploadedVideo() {
       }
     }
     if (!completed || !resultPayload) {
-      setProgress(72, "موتور جایگزین", "Gemini در دسترس نبود؛ در حال آماده‌سازی فریم‌های ویدئو برای OpenRouter…");
-      log("Gemini نتوانست تحلیل را کامل کند؛ موتور جایگزین OpenRouter Free به‌صورت خودکار فعال شد.", "warning");
+      setProgress(72, "موتور جایگزین", "Gemini در دسترس نبود؛ موتور رایگان چندمدلی OpenRouter در حال آماده‌سازی است…");
+      log("Gemini نتوانست تحلیل را کامل کند؛ OpenRouter Free با چند مدل چندرسانه‌ای و Failover خودکار فعال شد.", "warning");
       try {
-        const captured = await captureFallbackFrames(video, 18);
-        setProgress(76, "موتور جایگزین", `${captured.frames.length} فریم مهم از ویدئو آماده شد؛ OpenRouter در حال تحلیل است…`);
-        log(`برای OpenRouter ${captured.frames.length} فریم کلیدی از ویدئو استخراج شد.`, "info");
+        const captured = await captureFallbackFrames(video, 12);
+        setProgress(76, "موتور جایگزین", `${captured.frames.length} فریم سبک‌شده آماده شد؛ OpenRouter در حال انتخاب خودکار مدل رایگان مناسب است…`);
+        log(`برای OpenRouter ${captured.frames.length} فریم کلیدی سبک‌شده از ویدئو استخراج شد.`, "info");
         const fallbackPayload = await requestJson(`${window.location.origin}/api/analyze-video/openrouter-fallback`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
