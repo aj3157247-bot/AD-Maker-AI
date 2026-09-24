@@ -429,7 +429,12 @@ async function analyzeUploadedVideo() {
       const raw = await response.text();
       let data = {};
       try { data = raw ? JSON.parse(raw) : {}; } catch (_) {}
-      if (!response.ok) throw new Error(data.detail || data.message || data.error || `خطای سرور (HTTP ${response.status}).`);
+      if (!response.ok) {
+        const err = new Error(data.detail || data.message || data.error || `خطای سرور (HTTP ${response.status}).`);
+        err.status = response.status;
+        err.data = data;
+        throw err;
+      }
       return data;
     } catch (e) {
       if (e?.name === "AbortError") throw new Error("ارتباط با سرور بیش از حد طول کشید؛ این قطعه دوباره ارسال می‌شود.");
@@ -504,57 +509,101 @@ async function analyzeUploadedVideo() {
 
     setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
     log("مرحله ۳: تحلیل واقعی ویدئو با Gemini Interactions و اجرای پس‌زمینه شروع شد.");
-    let started;
-    if (size <= 20 * 1024 * 1024) {
-      // Small-video path: NEVER send fileUri/fileName. The video bytes are sent
-      // directly to the Interactions API, so a blob:// Files API URI cannot leak.
-      const inlineForm = new FormData();
-      inlineForm.append("video", video, video.name || "site-demo.mp4");
-      inlineForm.append("brand", $("#brand")?.value.trim() || "");
-      inlineForm.append("description", $("#desc")?.value.trim() || "");
-      inlineForm.append("language", state.language);
-      inlineForm.append("duration", String(state.duration));
-      inlineForm.append("platform", platformLabel(state.platform));
-      setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی مستقیم ویدئو است…");
-      log("تحلیل مستقیم Interactions شروع شد؛ Files API و blob:// برای این ویدئو استفاده نمی‌شود.", "success");
-      started = await requestJson(`${window.location.origin}/api/analyze-video/start-inline`, { method: "POST", body: inlineForm }, 120000);
-    } else {
-      // Large-video path: use the verified Files API URI returned by Gemini.
-      started = await requestJson(`${window.location.origin}/api/analyze-video/start`, {
+    const failedModels = new Set();
+    const maxFallbacks = 5;
+    const startInteraction = async () => {
+      if (size <= 20 * 1024 * 1024) {
+        const inlineForm = new FormData();
+        inlineForm.append("video", video, video.name || "site-demo.mp4");
+        inlineForm.append("brand", $("#brand")?.value.trim() || "");
+        inlineForm.append("description", $("#desc")?.value.trim() || "");
+        inlineForm.append("language", state.language);
+        inlineForm.append("duration", String(state.duration));
+        inlineForm.append("platform", platformLabel(state.platform));
+        inlineForm.append("excludeModels", JSON.stringify([...failedModels]));
+        return requestJson(`${window.location.origin}/api/analyze-video/start-inline`, { method: "POST", body: inlineForm }, 120000);
+      }
+      return requestJson(`${window.location.origin}/api/analyze-video/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formStart)
+        body: JSON.stringify({ ...formStart, excludeModels: [...failedModels] })
       }, 60000);
-    }
+    };
 
-    // Long video analysis now runs as a Gemini background Interaction. The
-    // Worker returns immediately with an interaction id, and the browser polls
-    // the lightweight status endpoint instead of waiting on one long request.
-    let resultPayload = started;
-    if (started?.status === "completed" && started?.analysis) {
-      resultPayload = started;
-    } else {
-      const interactionId = String(started?.interactionId || started?.id || "");
-      if (!interactionId) throw new Error(started?.detail || "Gemini شناسه عملیات تحلیل را برنگرداند.");
-      log(`تحلیل پس‌زمینه Gemini شروع شد؛ شناسه عملیات دریافت شد.`, "success");
-      let done = false;
-      for (let poll = 1; poll <= 120; poll += 1) {
-        await wait(poll === 1 ? 2500 : 3000);
-        const status = await requestJson(`${window.location.origin}/api/analyze-video/interaction-status?id=${encodeURIComponent(interactionId)}`, {}, 45000);
-        const st = String(status?.status || "in_progress").toLowerCase();
-        if (status?.status === "completed" && status?.analysis) {
-          resultPayload = status;
-          done = true;
+    let resultPayload = null;
+    let completed = false;
+    let lastFailure = null;
+    for (let attempt = 1; attempt <= maxFallbacks && !completed; attempt += 1) {
+      try {
+        setProgress(68, "تحلیل محتوای ویدئو", attempt === 1
+          ? "Gemini در حال بررسی واقعی ویدئو است…"
+          : `مدل قبلی پاسخ نداد؛ مدل جایگزین ${attempt - 1} در حال شروع است…`);
+        if (attempt > 1) log(`مدل قبلی Gemini با ظرفیت کافی پاسخ نداد؛ تلاش خودکار ${attempt - 1} از ${maxFallbacks - 1} با مدل بعدی شروع شد.`, "info");
+        const started = await startInteraction();
+        if (started?.status === "completed" && started?.analysis) {
+          resultPayload = started;
+          completed = true;
           break;
         }
-        if (["failed", "cancelled", "incomplete", "budget_exceeded"].includes(st)) {
-          throw new Error(status?.detail || `تحلیل Gemini با وضعیت ${st} پایان یافت.`);
+        const interactionId = String(started?.interactionId || started?.id || "");
+        if (!interactionId) throw new Error(started?.detail || "Gemini شناسه عملیات تحلیل را برنگرداند.");
+        const activeModel = String(started?.model || "");
+        log(`تحلیل پس‌زمینه Gemini شروع شد${activeModel ? ` با ${activeModel}` : ""}.`, "success");
+
+        for (let poll = 1; poll <= 120; poll += 1) {
+          await wait(poll === 1 ? 2500 : 3000);
+          let status;
+          try {
+            status = await requestJson(`${window.location.origin}/api/analyze-video/interaction-status?id=${encodeURIComponent(interactionId)}`, {}, 45000);
+          } catch (statusError) {
+            const info = statusError?.data || {};
+            const retryable = Boolean(info.retryable) || statusError?.status === 503 || /high demand|rate limit|resource exhausted|quota|capacity|unavailable|temporar/i.test(String(statusError?.message || ""));
+            if (retryable && attempt < maxFallbacks) {
+              const failedModel = String(info.failedModel || activeModel || "");
+              if (failedModel) failedModels.add(failedModel);
+              lastFailure = statusError;
+              log(`Gemini این تلاش را به‌دلیل ظرفیت/High Demand متوقف کرد${failedModel ? ` (${failedModel})` : ""}. تلاش بعدی خودکار انجام می‌شود.`, "warning");
+              break;
+            }
+            throw statusError;
+          }
+          const st = String(status?.status || "in_progress").toLowerCase();
+          if (status?.status === "completed" && status?.analysis) {
+            resultPayload = status;
+            completed = true;
+            break;
+          }
+          if (["failed", "cancelled", "incomplete", "budget_exceeded"].includes(st)) {
+            const retryable = Boolean(status?.retryable);
+            if (retryable && attempt < maxFallbacks) {
+              const failedModel = String(status?.failedModel || activeModel || "");
+              if (failedModel) failedModels.add(failedModel);
+              lastFailure = new Error(status?.detail || `تحلیل Gemini با وضعیت ${st} پایان یافت.`);
+              log(`Gemini این تلاش را به‌دلیل ظرفیت/High Demand متوقف کرد${failedModel ? ` (${failedModel})` : ""}. تلاش بعدی خودکار انجام می‌شود.`, "warning");
+              break;
+            }
+            throw new Error(status?.detail || `تحلیل Gemini با وضعیت ${st} پایان یافت.`);
+          }
+          const percent = Math.min(88, 68 + Math.round((poll / 120) * 18));
+          setProgress(percent, "تحلیل محتوای ویدئو", `Gemini در حال بررسی ویدئو است… وضعیت: ${st === "queued" ? "در صف" : "در حال پردازش"}`);
+          if (poll === 1 || poll % 10 === 0) log(`تحلیل Gemini هنوز در حال انجام است… (${Math.round(poll * 3 / 60)} دقیقه)`, "info");
         }
-        const percent = Math.min(88, 68 + Math.round((poll / 120) * 18));
-        setProgress(percent, "تحلیل محتوای ویدئو", `Gemini در حال بررسی ویدئو است… وضعیت: ${st === "queued" ? "در صف" : "در حال پردازش"}`);
-        if (poll === 1 || poll % 10 === 0) log(`تحلیل Gemini هنوز در حال انجام است… (${Math.round(poll * 3 / 60)} دقیقه)`, "info");
+      } catch (e) {
+        const info = e?.data || {};
+        const retryable = Boolean(info.retryable) || e?.status === 503 || /high demand|rate limit|resource exhausted|quota|capacity|unavailable|temporar/i.test(String(e?.message || ""));
+        if (retryable && attempt < maxFallbacks) {
+          const failedModel = String(info.failedModel || "");
+          if (failedModel) failedModels.add(failedModel);
+          lastFailure = e;
+          log(`خطای موقت ظرفیت Gemini دریافت شد؛ تلاش بعدی خودکار انجام می‌شود${failedModel ? ` (${failedModel})` : ""}.`, "warning");
+          await wait(1200);
+          continue;
+        }
+        throw e;
       }
-      if (!done) throw new Error("تحلیل ویدئو بیش از حد طول کشید. لطفاً دوباره تلاش کن.");
+    }
+    if (!completed || !resultPayload) {
+      throw lastFailure || new Error("Gemini پس از چند مدل جایگزین نتوانست تحلیل ویدئو را کامل کند.");
     }
     setProgress(92, "تحلیل محتوای ویدئو", "تحلیل صحنه‌ها کامل شد؛ در حال آماده‌سازی سناریو…");
     const result = resultPayload.analysis;
