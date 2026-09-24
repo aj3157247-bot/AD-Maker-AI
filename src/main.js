@@ -379,10 +379,7 @@ async function renderVideo(voiceBlob) {
     const kind = await detectMediaKind(f, objectUrl);
 
     if (kind === "image") {
-      const im = new Image();
-      im.decoding = "async";
-      im.src = objectUrl;
-      await waitForImage(im, f.name);
+      const im = await loadImageFile(f, objectUrl);
       media.push({ type: "image", el: im, name: f.name, duration: 1 });
       continue;
     }
@@ -583,44 +580,115 @@ async function renderVideo(voiceBlob) {
 }
 
 async function detectMediaKind(file, objectUrl) {
+  // Android gallery providers can give files names such as "jpg.1000052843"
+  // and an empty/incorrect MIME. Inspect the actual bytes first.
+  const sniffed = await sniffMediaType(file);
+  if (sniffed === "image") return "image";
+  if (sniffed === "video") return "video";
+
   const declared = String(file?.type || "").toLowerCase();
   if (declared.startsWith("image/")) return "image";
   if (declared.startsWith("video/")) return "video";
 
-  // Unknown MIME: test actual browser decoders instead of the filename/MIME.
-  const image = new Image();
-  image.src = objectUrl;
-  try { await waitForImage(image, file?.name || "فایل"); return "image"; } catch (_) {}
+  // Last resort: ask the browser decoders directly.
+  try {
+    const image = new Image();
+    image.src = objectUrl;
+    await waitForImage(image, file?.name || "فایل");
+    return "image";
+  } catch (_) {}
 
-  const video = document.createElement("video");
-  video.muted = true;
-  video.playsInline = true;
-  video.preload = "metadata";
-  video.src = objectUrl;
-  try { await waitForVideo(video, file?.name || "فایل", true); return "video"; } catch (_) {}
+  try {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.src = objectUrl;
+    await waitForVideo(video, file?.name || "فایل", true);
+    return "video";
+  } catch (_) {}
   return "unknown";
 }
 
-function waitForImage(img, name) {
-  return new Promise((resolve, reject) => {
-    if (img.complete && img.naturalWidth > 0) return resolve();
-    const ok = () => { cleanup(); resolve(); };
-    const fail = () => { cleanup(); reject(new Error(`خواندن تصویر «${name}» ناموفق بود. فایل را دوباره از گالری انتخاب کن.`)); };
-    const cleanup = () => { img.removeEventListener("load", ok); img.removeEventListener("error", fail); };
-    img.addEventListener("load", ok, { once: true });
-    img.addEventListener("error", fail, { once: true });
-  });
+async function sniffMediaType(file) {
+  try {
+    const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+    if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image"; // JPEG
+    if (head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) return "image"; // PNG
+    if (head.length >= 6 && head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46) return "image"; // GIF
+    if (head.length >= 12 && head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46 && head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50) return "image"; // WEBP
+    if (head.length >= 12 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) {
+      const brand = String.fromCharCode(...head.slice(8, 12));
+      if (/^(avif|avis|heic|heix|hevc|mif1|msf1)$/i.test(brand)) return "image";
+      if (/^(isom|iso2|mp41|mp42|3gp|3g2|M4V)$/i.test(brand)) return "video";
+    }
+    if (head.length >= 12 && head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) return "video"; // WebM/Matroska
+  } catch (_) {}
+  return null;
 }
 
-function waitForVideo(video, name, metadataOnly = false) {
+async function loadImageFile(file, objectUrl) {
+  // First try createImageBitmap: it is generally more reliable with Android
+  // File/Blob objects and avoids filename/MIME quirks.
+  if (window.createImageBitmap) {
+    try {
+      const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+      const c = document.createElement("canvas");
+      c.width = bitmap.width; c.height = bitmap.height;
+      c.getContext("2d").drawImage(bitmap, 0, 0);
+      bitmap.close?.();
+      const img = new Image();
+      img.src = c.toDataURL("image/png");
+      await waitForImage(img, file?.name || "فایل");
+      return img;
+    } catch (_) {}
+  }
+
+  // Force a correct MIME from the file signature. This fixes Samsung/Android
+  // gallery names such as jpg.1000052843 where File.type is empty.
+  try {
+    const kind = await sniffMediaType(file);
+    const mime = kind === "image" ? sniffImageMime(file) : null;
+    const blob = mime ? new Blob([await file.arrayBuffer()], { type: mime }) : file;
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.decoding = "async";
+    img.src = url;
+    await waitForImage(img, file?.name || "فایل");
+    try { URL.revokeObjectURL(url); } catch (_) {}
+    return img;
+  } catch (_) {}
+
+  // Final data-URL fallback.
+  try {
+    const dataUrl = await fileToDataUrl(file);
+    const img = new Image();
+    img.decoding = "async";
+    img.src = dataUrl;
+    await waitForImage(img, file?.name || "فایل");
+    return img;
+  } catch (_) {
+    throw new Error(`خواندن تصویر «${file?.name || "فایل"}» ناموفق بود. اگر عکس از گالری سامسونگ است، آن را به JPG یا PNG تبدیل و دوباره انتخاب کن.`);
+  }
+}
+
+async function sniffImageMime(file) {
+  try {
+    const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+    if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
+    if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) return "image/png";
+    if (head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46) return "image/gif";
+    if (head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46 && head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50) return "image/webp";
+  } catch (_) {}
+  return null;
+}
+
+function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
-    const event = metadataOnly ? "loadedmetadata" : "loadeddata";
-    const ok = () => { cleanup(); resolve(); };
-    const fail = () => { cleanup(); reject(new Error(`خواندن ویدئوی «${name}» ناموفق بود. MP4 با H.264 را امتحان کن.`)); };
-    const cleanup = () => { video.removeEventListener(event, ok); video.removeEventListener("error", fail); };
-    video.addEventListener(event, ok, { once: true });
-    video.addEventListener("error", fail, { once: true });
-    video.load();
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error("FileReader failed"));
+    r.readAsDataURL(file);
   });
 }
 
