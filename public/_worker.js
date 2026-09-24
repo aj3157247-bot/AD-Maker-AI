@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "3.5.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "3.6.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -196,15 +196,25 @@ For the script: narrate the actual sequence of the video so the voice matches wh
     // Keep the same uploaded file and automatically retry/fail over to other
     // video-capable Flash models instead of making the user start the upload again.
     const preferredModel = String(env.GEMINI_MODEL || "").trim();
-    const modelCandidates = [...new Set([
+    // Agentic video is supported by Gemini 3.8 Flash, 3.7 Flash, 3.6 Flash
+    // and 3.5 Flash-Lite. IMPORTANT: gemini-3.5-flash does NOT support
+    // agentic video, so never send media_processing=AGENTIC to that model.
+    const agenticModels = [...new Set([
       preferredModel,
       "gemini-3.8-flash",
+      "gemini-3.7-flash",
       "gemini-3.6-flash",
-      "gemini-3.5-flash-lite",
-      "gemini-3.5-flash"
+      "gemini-3.5-flash-lite"
     ].filter(Boolean))];
+    const staticModels = [...new Set([
+      "gemini-3.8-flash",
+      "gemini-3.7-flash",
+      "gemini-3.6-flash",
+      "gemini-3.5-flash",
+      "gemini-2.5-flash"
+    ])];
 
-    const requestBody = (model) => ({
+    const requestBody = (model, processing = "AGENTIC") => ({
       contents: [{
         role: "user",
         parts: [
@@ -213,7 +223,7 @@ For the script: narrate the actual sequence of the video so the voice matches wh
               file_uri: fileUri,
               mime_type: mime
             },
-            media_processing: "AGENTIC"
+            media_processing: processing
           },
           { text: prompt }
         ]
@@ -228,39 +238,56 @@ For the script: narrate the actual sequence of the video so the voice matches wh
     const retryable = new Set([408, 429, 500, 502, 503, 504]);
     const attemptedModels = [];
     let gen = null;
-    let model = modelCandidates[0] || "gemini-3.8-flash";
+    let model = agenticModels[0] || "gemini-3.8-flash";
     let lastGoogleError = "";
     let lastStatus = 503;
+    let processingMode = "agentic";
 
-    outer: for (const candidate of modelCandidates) {
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
-        attemptedModels.push(`${candidate}#${attempt}`);
-        try {
-          gen = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidate)}:generateContent`, {
-            method: "POST",
-            headers: {
-              "x-goog-api-key": env.GEMINI_API_KEY,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(requestBody(candidate))
-          });
-        } catch (e) {
-          gen = null;
-          lastGoogleError = String(e?.message || e);
-          lastStatus = 502;
+    async function tryModels(models, processing) {
+      for (const candidate of models) {
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          attemptedModels.push(`${candidate}/${processing.toLowerCase()}#${attempt}`);
+          try {
+            gen = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidate)}:generateContent`, {
+              method: "POST",
+              headers: {
+                "x-goog-api-key": env.GEMINI_API_KEY,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify(requestBody(candidate, processing))
+            });
+          } catch (e) {
+            gen = null;
+            lastGoogleError = String(e?.message || e);
+            lastStatus = 502;
+          }
+
+          if (gen?.ok) {
+            model = candidate;
+            processingMode = processing.toLowerCase();
+            return true;
+          }
+
+          lastStatus = gen?.status || 502;
+          lastGoogleError = gen ? await safeGoogleError(gen) : lastGoogleError;
+
+          // A model-capability error should immediately move to the next model.
+          if (/agentic.*not enabled|does not support.*agentic|not supported.*agentic/i.test(lastGoogleError)) break;
+          if (!retryable.has(lastStatus)) break;
+          if (attempt < 2) await sleep(1800 * attempt);
         }
-
-        if (gen?.ok) {
-          model = candidate;
-          break outer;
-        }
-
-        lastStatus = gen?.status || 502;
-        lastGoogleError = gen ? await safeGoogleError(gen) : lastGoogleError;
-
-        if (!retryable.has(lastStatus)) break;
-        if (attempt < 2) await sleep(1800 * attempt);
       }
+      return false;
+    }
+
+    // First use agentic video on models that actually support it.
+    let succeeded = await tryModels(agenticModels, "AGENTIC");
+
+    // For short videos, static processing is a valid fallback and is supported
+    // by all video-capable Gemini models. This also avoids failing just because
+    // every agentic-capable model is temporarily busy.
+    if (!succeeded) {
+      succeeded = await tryModels(staticModels, "STATIC");
     }
 
     if (!gen?.ok) {
@@ -270,7 +297,8 @@ For the script: narrate the actual sequence of the video so the voice matches wh
         detail: busy
           ? "سرویس Gemini در حال حاضر ظرفیت کافی ندارد. سیستم چند مدل و چند تلاش خودکار انجام داد؛ لطفاً چند دقیقه بعد دوباره امتحان کن."
           : lastGoogleError,
-        model: modelCandidates[0] || model,
+        model,
+        processingMode,
         attemptedModels
       }, busy ? 503 : (lastStatus || 502));
     }
@@ -290,6 +318,7 @@ For the script: narrate the actual sequence of the video so the voice matches wh
       ok: true,
       status: "completed",
       model,
+      processingMode,
       fileName,
       fileUri,
       analysis: normalizeVideoAnalysis(analysis)
