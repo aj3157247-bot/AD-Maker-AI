@@ -384,44 +384,93 @@ async function analyzeUploadedVideo() {
   state.videoAnalysisBusy = true;
   updateVideoAnalysisUI();
   setStage(0);
-  setProgress(15, "تحلیل ویدئو", "در حال بررسی صفحه‌ها، قابلیت‌ها و زمان‌بندی ویدئو…");
+  setProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود…");
   log("تحلیل هوشمند ویدئوی معرفی شروع شد.", "info");
-  const form = new FormData();
-  form.append("video", video, video.name || "site-demo.mp4");
-  form.append("brand", $("#brand")?.value.trim() || "");
-  form.append("description", $("#desc")?.value.trim() || "");
-  form.append("language", state.language);
-  form.append("duration", String(state.duration));
-  form.append("platform", platformLabel(state.platform));
-  try {
+
+  const requestJson = async (url, options = {}) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 240000);
-    let response;
+    const timer = setTimeout(() => controller.abort(), 45000);
     try {
-      response = await fetch(`${window.location.origin}/api/analyze-video`, { method: "POST", body: form, cache: "no-store", signal: controller.signal });
+      const response = await fetch(url, { ...options, cache: "no-store", signal: controller.signal });
+      const raw = await response.text();
+      let data = {};
+      try { data = raw ? JSON.parse(raw) : {}; } catch (_) {}
+      if (!response.ok) throw new Error(data.detail || data.message || data.error || `خطای سرور (HTTP ${response.status}).`);
+      return data;
+    } catch (e) {
+      if (e?.name === "AbortError") throw new Error("ارتباط با سرور بیش از حد طول کشید؛ دوباره تلاش کن.");
+      throw e;
     } finally { clearTimeout(timer); }
-    const raw = await response.text();
-    let data = {};
-    try { data = raw ? JSON.parse(raw) : {}; } catch (_) {}
-    if (!response.ok) throw new Error(data.detail || data.message || data.error || `تحلیل ویدئو ناموفق بود (HTTP ${response.status}).`);
-    state.videoAnalysis = data;
+  };
+
+  try {
+    const form = new FormData();
+    form.append("video", video, video.name || "site-demo.mp4");
+    setProgress(15, "ارسال ویدئو", "ویدئو به Gemini ارسال می‌شود؛ صفحه را نبند.");
+    log("مرحله ۱ از ۳: ارسال فایل به Gemini…");
+    const uploaded = await requestJson(`${window.location.origin}/api/analyze-video/upload`, { method: "POST", body: form });
+    const fileName = uploaded.fileName;
+    let fileInfo = uploaded;
+    let polls = 0;
+
+    while (String(fileInfo.state || "PROCESSING").toUpperCase() !== "ACTIVE") {
+      const stateName = String(fileInfo.state || "PROCESSING").toUpperCase();
+      if (stateName === "FAILED") throw new Error(fileInfo.detail || "Gemini نتوانست فایل ویدئو را پردازش کند.");
+      polls += 1;
+      const percent = Math.min(52, 22 + Math.min(28, polls * 2));
+      setProgress(percent, "پردازش ویدئو", `Gemini در حال آماده‌سازی ویدئو است… وضعیت: ${stateName}`);
+      if (polls === 1) log("فایل دریافت شد؛ Gemini در حال پردازش ویدئو است.");
+      await wait(3500);
+      fileInfo = await requestJson(`${window.location.origin}/api/analyze-video/file-status?name=${encodeURIComponent(fileName)}`);
+      if (polls > 90) throw new Error("پردازش فایل در Gemini بیش از حد طول کشید. ویدئوی کوتاه‌تر یا کم‌حجم‌تر امتحان کن.");
+    }
+
+    setProgress(55, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
+    log("مرحله ۲ از ۳: فایل آماده شد؛ تحلیل پس‌زمینه شروع می‌شود.", "success");
+    const formStart = {
+      fileName: fileInfo.fileName || fileName,
+      fileUri: fileInfo.fileUri || uploaded.fileUri,
+      mimeType: fileInfo.mimeType || uploaded.mimeType || "video/mp4",
+      brand: $("#brand")?.value.trim() || "",
+      description: $("#desc")?.value.trim() || "",
+      language: state.language,
+      duration: String(state.duration),
+      platform: platformLabel(state.platform)
+    };
+    const started = await requestJson(`${window.location.origin}/api/analyze-video/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formStart) });
+    const interactionId = started.interactionId;
+    let result = null;
+    let interactionPolls = 0;
+
+    while (!result) {
+      interactionPolls += 1;
+      setProgress(Math.min(94, 58 + Math.min(36, interactionPolls * 2)), "تحلیل محتوای ویدئو", "Gemini در حال بررسی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
+      if (interactionPolls === 1) log("مرحله ۳ از ۳: تحلیل محتوای واقعی ویدئو در پس‌زمینه اجرا شد.");
+      await wait(4000);
+      const status = await requestJson(`${window.location.origin}/api/analyze-video/interaction-status?id=${encodeURIComponent(interactionId)}`);
+      if (status.status === "completed") result = status;
+      else if (["failed", "cancelled"].includes(String(status.status).toLowerCase())) throw new Error(status.detail || "تحلیل Gemini ناموفق شد.");
+      if (interactionPolls > 120) throw new Error("تحلیل ویدئو بیش از حد طول کشید؛ لطفاً دوباره تلاش کن.");
+    }
+
+    state.videoAnalysis = result;
     updateVideoAnalysisUI();
-    if (data.script) {
-      state.script = data.script.trim();
+    if (result.script) {
+      state.script = result.script.trim();
       $("#scriptEditor").value = state.script;
       $("#scriptEditor").disabled = false;
       $("#editScript").disabled = false;
       updateScriptMeta(state.script, "تحلیل ویدئو");
     }
-    const scenes = Array.isArray(data.scenes) ? data.scenes : [];
+    const scenes = Array.isArray(result.scenes) ? result.scenes : [];
     if (scenes.length) {
-      log(`ویدئو تحلیل شد: ${scenes.length} بخش/قاب مهم شناسایی شد.`, "success");
+      log(`تحلیل ویدئو کامل شد: ${scenes.length} بخش مهم شناسایی شد.`, "success");
       scenes.slice(0, 8).forEach((scene, i) => log(`${String(i + 1).padStart(2, "0")} · ${scene.start || ""}${scene.end ? `–${scene.end}` : ""} · ${scene.title || scene.description || "بخش ویدئو"}`));
-    } else log("ویدئو تحلیل شد و سناریوی مبتنی بر محتوای واقعی آماده است.", "success");
+    } else log("تحلیل ویدئو کامل شد و سناریوی مبتنی بر محتوای واقعی آماده است.", "success");
     setProgress(42, "سناریو آماده", "سناریو بر اساس بخش‌های واقعی ویدئو آماده شد.");
-    return data;
+    return result;
   } catch (e) {
-    const detail = e?.name === "AbortError" ? "تحلیل ویدئو بیش از حد طول کشید؛ یک ویدئوی کوتاه‌تر امتحان کن." : String(e?.message || e);
+    const detail = String(e?.message || e);
     state.videoAnalysis = null;
     updateVideoAnalysisUI();
     log(`تحلیل ویدئو انجام نشد: ${detail}`, "error");
