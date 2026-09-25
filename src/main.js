@@ -502,20 +502,21 @@ async function analyzeUploadedVideo() {
     }
   };
 
-  // Smart parallel fallback: while Gemini processes the full video, prepare a
-  // lightweight visual snapshot once and let OpenRouter + Groq work in parallel.
-  // If Gemini finishes first, their work is simply ignored. If Gemini stalls or
-  // hits High Demand, the fastest successful scout becomes the immediate result.
+  // Coordinated multi-AI pipeline: Gemini, OpenRouter and Groq work in parallel.
+  // The first valid result unblocks the user, while already-finished specialists
+  // are merged into a shared context before the voice-over stage.
   let parallelScoutPromise = null;
-  let parallelScoutTimer = null;
   let parallelScoutStarted = false;
+  const parallelScoutResults = [];
+  const parallelScoutErrors = [];
+
   const startParallelScouts = () => {
     if (parallelScoutPromise) return parallelScoutPromise;
     parallelScoutStarted = true;
     parallelScoutPromise = (async () => {
       const captured = await captureFallbackFrames(video, 6);
-      setProgress(70, "تحلیل موازی", `Gemini در حال تحلیل کامل است؛ OpenRouter و Groq همزمان ${captured.frames.length} فریم کلیدی را بررسی می‌کنند…`);
-      log(`تحلیل موازی فعال شد: ${captured.frames.length} فریم برای OpenRouter و 3 فریم برای Groq ارسال می‌شود.`, "info");
+      setProgress(66, "همکاری موازی AI", `Gemini تحلیل کامل را انجام می‌دهد؛ OpenRouter و Groq همزمان ${captured.frames.length} فریم کلیدی را بررسی می‌کنند…`);
+      log("همکاری موازی فعال شد: Gemini + OpenRouter + Groq همزمان کار می‌کنند.", "info");
       const baseBody = {
         frames: captured.frames,
         brand: $("#brand")?.value.trim() || "",
@@ -524,27 +525,93 @@ async function analyzeUploadedVideo() {
         duration: String(state.duration),
         platform: platformLabel(state.platform)
       };
-      const openRouterJob = requestJson(`${window.location.origin}/api/analyze-video/openrouter-fallback`, {
+      const record = (provider, promise) => promise.then(payload => {
+        const result = { ...payload, provider: payload?.provider || provider, analysis: {
+          summary: payload?.summary || "",
+          facts: payload?.facts || [],
+          scenes: payload?.scenes || [],
+          script: payload?.script || ""
+        }};
+        parallelScoutResults.push(result);
+        log(`${provider} نتیجه خود را تحویل داد؛ نتیجه در زمینه مشترک AIها ذخیره شد.`, "success");
+        return result;
+      }).catch(error => {
+        parallelScoutErrors.push({ provider, error });
+        throw error;
+      });
+
+      const openRouterJob = record("openrouter-video-fallback", requestJson(`${window.location.origin}/api/analyze-video/openrouter-fallback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(baseBody)
       }, 120000).then(payload => {
         if (payload?.status !== "completed" || !payload?.script) throw new Error(payload?.detail || "OpenRouter تحلیل قابل استفاده نداد.");
-        return { ...payload, analysis: { summary: payload.summary || "", facts: payload.facts || [], scenes: payload.scenes || [], script: payload.script } };
-      });
-      const groqJob = requestJson(`${window.location.origin}/api/analyze-video/groq-fallback`, {
+        return payload;
+      }));
+
+      const groqJob = record("groq-vision-scout", requestJson(`${window.location.origin}/api/analyze-video/groq-fallback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...baseBody, frames: captured.frames.slice(0, 3) })
       }, 90000).then(payload => {
         if (payload?.status !== "completed") throw new Error(payload?.detail || "Groq تحلیل قابل استفاده نداد.");
-        return { ...payload, analysis: { summary: payload.summary || "", facts: payload.facts || [], scenes: payload.scenes || [], script: payload.script || "" } };
-      });
+        return payload;
+      }));
+
       return Promise.any([openRouterJob, groqJob]);
     })();
     return parallelScoutPromise;
   };
 
+  const collectParallelInsights = async (waitMs = 1400) => {
+    if (!parallelScoutStarted) return [];
+    const deadline = Date.now() + waitMs;
+    while (Date.now() < deadline) {
+      if (parallelScoutResults.length >= 2) break;
+      await wait(Math.min(180, Math.max(30, deadline - Date.now())));
+    }
+    return parallelScoutResults.slice();
+  };
+
+  const mergeAiAnalyses = (primaryPayload, extras = []) => {
+    const payloads = [];
+    if (primaryPayload?.analysis) payloads.push(primaryPayload);
+    for (const item of extras) {
+      if (item?.analysis && !payloads.some(x => x.provider === item.provider && x.model === item.model)) payloads.push(item);
+    }
+    const analyses = payloads.map(x => x.analysis || {}).filter(Boolean);
+    if (!analyses.length) return primaryPayload?.analysis || null;
+    const facts = [];
+    const factKeys = new Set();
+    const scenes = [];
+    const sceneKeys = new Set();
+    for (const analysis of analyses) {
+      for (const fact of Array.isArray(analysis.facts) ? analysis.facts : []) {
+        const text = String(fact || "").trim();
+        const key = text.toLowerCase();
+        if (text && !factKeys.has(key)) { factKeys.add(key); facts.push(text); }
+      }
+      for (const scene of Array.isArray(analysis.scenes) ? analysis.scenes : []) {
+        const item = {
+          start: String(scene?.start || ""),
+          end: String(scene?.end || ""),
+          title: String(scene?.title || ""),
+          description: String(scene?.description || "")
+        };
+        const key = `${item.start}|${item.end}|${item.title}|${item.description}`.toLowerCase();
+        if ((item.title || item.description) && !sceneKeys.has(key)) { sceneKeys.add(key); scenes.push(item); }
+      }
+    }
+    return {
+      summary: String(analyses.map(a => a.summary).find(Boolean) || "").trim(),
+      facts: facts.slice(0, 80),
+      scenes: scenes.slice(0, 50),
+      script: String(analyses.map(a => a.script).find(Boolean) || "").trim(),
+      coordinated: payloads.length > 1,
+      providers: payloads.map(x => x.provider || x.model || "AI").filter(Boolean),
+      providerModels: payloads.map(x => x.model || "").filter(Boolean)
+    };
+  };
   try {
     const size = Number(video.size || 0);
     if (!size) throw new Error("حجم ویدئو معتبر نیست.");
@@ -648,6 +715,9 @@ async function analyzeUploadedVideo() {
           ? "Gemini در حال بررسی واقعی ویدئو است…"
           : `مدل قبلی پاسخ نداد؛ مدل جایگزین ${attempt - 1} در حال شروع است…`);
         if (attempt > 1) log(`مدل قبلی Gemini با ظرفیت کافی پاسخ نداد؛ تلاش خودکار ${attempt - 1} از ${maxFallbacks - 1} با مدل بعدی شروع شد.`, "info");
+        // Warm up the visual specialists before waiting for Gemini. This makes
+        // the three analysis lanes genuinely concurrent rather than sequential.
+        startParallelScouts().catch(() => {});
         const started = await startInteraction();
         if (started?.status === "completed" && started?.analysis) {
           resultPayload = started;
@@ -664,15 +734,6 @@ async function analyzeUploadedVideo() {
         const queuedFailoverMs = 35_000;
         const processingFailoverMs = 75_000;
         log(`تحلیل پس‌زمینه Gemini شروع شد${activeModel ? ` با ${activeModel}` : ""}.`, "success");
-        // Give Gemini a short head start. If it is still processing after 8s,
-        // launch the independent visual scouts so no provider sits idle.
-        if (!parallelScoutPromise && !parallelScoutTimer) {
-          parallelScoutTimer = setTimeout(() => {
-            parallelScoutTimer = null;
-            startParallelScouts().catch(() => {});
-          }, 8000);
-        }
-
         for (let poll = 1; poll <= 120; poll += 1) {
           await wait(poll === 1 ? 2500 : 3000);
           let status;
@@ -689,8 +750,7 @@ async function analyzeUploadedVideo() {
               break;
             }
             lastFailure = statusError;
-            if (parallelScoutTimer) { clearTimeout(parallelScoutTimer); parallelScoutTimer = null; }
-            startParallelScouts().catch(() => {});
+                        startParallelScouts().catch(() => {});
             break;
           }
           const st = String(status?.status || "in_progress").toLowerCase();
@@ -713,8 +773,7 @@ async function analyzeUploadedVideo() {
                 : `Gemini ظرفیت کافی نشان نداد؛ انتقال هوشمند انجام می‌شود.`
             );
             log(`Gemini هنوز آماده پاسخ نیست؛ برای جلوگیری از گیرکردن روی 68٪، تحلیل موازی فعال می‌شود${failedModel ? ` (${failedModel})` : ""}.`, "warning");
-            if (parallelScoutTimer) { clearTimeout(parallelScoutTimer); parallelScoutTimer = null; }
-            startParallelScouts().catch(() => {});
+                        startParallelScouts().catch(() => {});
             break;
           }
 
@@ -725,16 +784,14 @@ async function analyzeUploadedVideo() {
             if (failedModel) failedModels.add(failedModel);
             lastFailure = new Error(status?.detail || "Gemini ظرفیت کافی ندارد.");
             log(`Gemini High Demand/ظرفیت را گزارش کرد؛ تحلیل موازی OpenRouter + Groq هم فعال است${failedModel ? ` (${failedModel})` : ""}.`, "warning");
-            if (parallelScoutTimer) { clearTimeout(parallelScoutTimer); parallelScoutTimer = null; }
-            startParallelScouts().catch(() => {});
+                        startParallelScouts().catch(() => {});
             break;
           }
 
           if (status?.status === "completed" && status?.analysis) {
             resultPayload = status;
             completed = true;
-            if (parallelScoutTimer) { clearTimeout(parallelScoutTimer); parallelScoutTimer = null; }
-            break;
+                        break;
           }
           if (["failed", "cancelled", "incomplete", "budget_exceeded"].includes(st)) {
             const retryable = Boolean(status?.retryable);
@@ -768,15 +825,14 @@ async function analyzeUploadedVideo() {
       }
     }
     if (!completed || !resultPayload) {
-      setProgress(72, "موتورهای موازی", "Gemini پاسخ کامل نداد؛ سریع‌ترین تحلیل معتبر از OpenRouter یا Groq انتخاب می‌شود…");
-      log("Gemini ظرفیت/High Demand داشت؛ OpenRouter و Groq به‌صورت موازی در حال تحلیل فریم‌های کلیدی هستند.", "warning");
+      setProgress(72, "تحویل بین AIها", "Gemini پاسخ کامل نداد؛ نتیجه سریع‌تر بین OpenRouter و Groq انتخاب می‌شود…");
+      log("Gemini کامل نشد؛ OpenRouter و Groq نتیجه‌های خود را به مسیر مشترک تحویل می‌دهند.", "warning");
       try {
-        if (parallelScoutTimer) { clearTimeout(parallelScoutTimer); parallelScoutTimer = null; }
         const fallbackPayload = await startParallelScouts();
         if (fallbackPayload?.status === "completed" && fallbackPayload?.analysis) {
           resultPayload = fallbackPayload;
           completed = true;
-          log(`تحلیل موازی با موفقیت انجام شد: ${fallbackPayload.provider || "AI"}${fallbackPayload.model ? ` / ${fallbackPayload.model}` : ""}.`, "success");
+          log(`اولین تحلیل موازی آماده شد: ${fallbackPayload.provider || "AI"}${fallbackPayload.model ? ` / ${fallbackPayload.model}` : ""}.`, "success");
         } else {
           throw new Error("هیچ‌یک از موتورهای موازی پاسخ قابل استفاده ندادند.");
         }
@@ -786,8 +842,15 @@ async function analyzeUploadedVideo() {
         throw new Error(`${base} | OpenRouter/Groq: ${second}`);
       }
     }
-    setProgress(92, "تحلیل محتوای ویدئو", "تحلیل صحنه‌ها کامل شد؛ در حال آماده‌سازی سناریو…");
-    const result = resultPayload.analysis;
+    // Never wait for a slow provider. Give already-finished specialists a very
+    // short window to enrich the fastest result before scripting/voice starts.
+    const extraInsights = await collectParallelInsights(1200);
+    const coordinatedResult = mergeAiAnalyses(resultPayload, extraInsights);
+    if (coordinatedResult?.coordinated) {
+      log(`هماهنگی AI کامل شد: ${coordinatedResult.providers.length} موتور در زمینه مشترک استفاده شدند (${coordinatedResult.providers.join(" + ")}).`, "success");
+    }
+    setProgress(92, "هماهنگی AI", "نتایج AIها در یک زمینه مشترک جمع شد؛ سناریو از اطلاعات تأییدشده ساخته می‌شود…");
+    const result = coordinatedResult || resultPayload.analysis;
 
     state.videoAnalysis = result;
     updateVideoAnalysisUI();
@@ -1020,12 +1083,13 @@ $("#scriptBtn").onclick = async () => {
       const analyzedWords = analyzedScript.split(/\s+/).filter(Boolean).length;
       const usableAnalyzedScript = analyzedScript && analyzedWords >= Math.max(12, Math.round(targetWords * 0.35));
 
-      if (usableAnalyzedScript) {
-        j = { script: analyzedScript, fallback: false, provider: "groq-vision-scout" };
-        log(`سناریوی آماده‌شده از تحلیل ویدئو مستقیم استفاده شد (${analyzedWords} کلمه)؛ درخواست تکراری AI حذف شد.`, "success");
+      const coordinatedVideo = videoAnalysis?.coordinated && Array.isArray(videoAnalysis?.providers) && videoAnalysis.providers.length > 1;
+      if (usableAnalyzedScript && !coordinatedVideo) {
+        j = { script: analyzedScript, fallback: false, provider: videoAnalysis?.providers?.[0] || "video-analysis" };
+        log(`سناریوی معتبر تحلیل ویدئو مستقیم استفاده شد (${analyzedWords} کلمه)؛ درخواست تکراری AI حذف شد.`, "success");
       } else {
         try {
-          j = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords, videoAnalysis: videoAnalysis ? { summary: videoAnalysis.summary || "", scenes: videoAnalysis.scenes || [], facts: videoAnalysis.facts || [], recommendedScript: videoAnalysis.script || "" } : null }, 30000);
+          j = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords, videoAnalysis: videoAnalysis ? { summary: videoAnalysis.summary || "", scenes: videoAnalysis.scenes || [], facts: videoAnalysis.facts || [], recommendedScript: videoAnalysis.script || "", coordinated: Boolean(videoAnalysis.coordinated), providers: Array.isArray(videoAnalysis.providers) ? videoAnalysis.providers : [], providerModels: Array.isArray(videoAnalysis.providerModels) ? videoAnalysis.providerModels : [] } : null }, 30000);
           if (j.fallback) {
             const reason = j.detail || j.error || "خطای نامشخص";
             log(`API سناریو پاسخ کامل نداد؛ حالت داخلی فعال شد. علت: ${reason}`, "error");
