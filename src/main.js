@@ -422,7 +422,8 @@ function updateVideoAnalysisUI() {
   }
 }
 
-async function analyzeUploadedVideo() {
+async function analyzeUploadedVideo(options = {}) {
+  const allowDegraded = Boolean(options?.allowDegraded);
   const video = state.assets.find(isVideoFile);
   if (!video || state.videoAnalysisBusy) return null;
   state.videoAnalysisBusy = true;
@@ -849,34 +850,44 @@ async function analyzeUploadedVideo() {
     };
 
     // Start every lane immediately. No provider waits for another provider.
-    const scoutLane = startParallelScouts();
-    const geminiLane = runGeminiLane();
-    log("🚀 هر سه مسیر تحلیل همزمان شروع شدند: Gemini + Groq + OpenRouter. اولین نتیجه معتبر مرحله را آزاد می‌کند.", "info");
+    // IMPORTANT: a rejected scout lane is NOT a production failure. The
+    // browser must keep the conveyor moving even when Gemini, Groq or
+    // OpenRouter is temporarily unavailable.
+    const scoutLane = startParallelScouts().catch(error => {
+      lastFailure = error;
+      log(`⚠️ مسیر تصویری Groq/OpenRouter شکست خورد؛ خط تولید متوقف نمی‌شود. ${String(error?.message || error)}`, "warning");
+      return null;
+    });
+    const geminiLane = runGeminiLane().catch(error => {
+      lastFailure = error;
+      log(`⚠️ مسیر Gemini در این نوبت نتیجه نداد؛ AIهای دیگر و خط تولید ادامه می‌دهند. ${String(error?.message || error)}`, "warning");
+      return null;
+    });
+    log("🚀 هر سه مسیر تحلیل همزمان شروع شدند: Gemini + Groq + OpenRouter. خط تولید منتظر هیچ AI منفردی نمی‌ماند.", "info");
 
-    try {
-      resultPayload = await Promise.any([geminiLane, scoutLane]);
-      completed = Boolean(resultPayload?.analysis);
-      if (completed) {
-        pipelineReleased = true;
-
-        log(`⚡ اولین تحلیل معتبر آماده شد: ${resultPayload.provider || resultPayload.model || "Gemini"}. ادامه تولید بدون انتظار برای AI کندتر انجام می‌شود.`, "success");
-      }
-    } catch (raceError) {
-      lastFailure = raceError;
-      try {
-        const retryPayload = await startParallelScouts();
-        if (retryPayload?.status === "completed" && retryPayload?.analysis) {
-          resultPayload = retryPayload;
-          completed = true;
-          pipelineReleased = true;
-        }
-      } catch (fallbackError) {
-        throw new Error(`${String(lastFailure?.message || "تحلیل موازی ناموفق بود.")} | Groq/OpenRouter: ${String(fallbackError?.message || fallbackError)}`);
-      }
+    resultPayload = await Promise.any([
+      geminiLane.then(x => x || Promise.reject(new Error("Gemini lane unavailable"))),
+      scoutLane.then(x => x || Promise.reject(new Error("scout lane unavailable")))
+    ]).catch(() => null);
+    completed = Boolean(resultPayload?.analysis);
+    if (completed) {
+      pipelineReleased = true;
+      log(`⚡ اولین تحلیل معتبر آماده شد: ${resultPayload.provider || resultPayload.model || "Gemini"}. ادامه تولید بدون انتظار برای AI کندتر انجام می‌شود.`, "success");
     }
 
+    // If every visual provider failed, this is a degraded-but-valid hand-off,
+    // not a fatal build error. The text AI pool can still build the script from
+    // the user's verified description while the rest of the pipeline continues.
     if (!completed || !resultPayload?.analysis) {
-      throw new Error(String(lastFailure?.message || "هیچ‌یک از AIها تحلیل قابل استفاده ندادند."));
+      pipelineReleased = true;
+      const reason = String(lastFailure?.message || "هیچ موتور تصویری در این نوبت نتیجه نداد.");
+      log(`⚡ تحلیل تصویری این نوبت آماده نشد؛ سناریو، صدا، برنامه صحنه و رندر بدون توقف ادامه پیدا می‌کنند. ${reason}`, "warning");
+      resultPayload = {
+        status: "degraded",
+        provider: "ai-conveyor",
+        analysis: { summary: "", facts: [], scenes: [], script: "", providers: [], providerModels: [], coordinated: false },
+        degraded: true
+      };
     }
 
     // Never wait for a slow provider. Give already-finished specialists a very
@@ -927,8 +938,20 @@ async function analyzeUploadedVideo() {
     const detail = String(e?.message || e);
     state.videoAnalysis = null;
     updateVideoAnalysisUI();
-    // Never leave the pipeline visually stuck on the active information stage.
-    // A quota/provider failure is a terminal state for this attempt.
+    if (allowDegraded) {
+      // Automatic production must never die because a single visual provider
+      // failed. Return a safe hand-off so the text/voice/render lanes continue.
+      state.conveyorReleased = true;
+      log(`⚡ تحلیل تصویری با خطای سرویس مواجه شد، اما خط تولید متوقف نشد. ${detail}`, "warning");
+      return {
+        status: "degraded",
+        provider: "ai-conveyor",
+        degraded: true,
+        analysis: { summary: "", facts: [], scenes: [], script: "", providers: [], providerModels: [], coordinated: false },
+        error: detail
+      };
+    }
+    // Manual video-analysis requests still show a real error to the user.
     setStage(0, "error");
     analysisProgress(68, "تحلیل متوقف شد", detail.includes("سهمیه روزانه") || detail.includes("daily quota")
       ? "سهمیه روزانه Gemini تمام شده است؛ بعد از بازنشانی سهمیه دوباره تلاش کن."
@@ -1134,13 +1157,16 @@ $("#scriptBtn").onclick = async () => {
       // TRUE CONVEYOR: video understanding is allowed only a short hand-off
       // window. If visual AI is slower, scripting/TTS/rendering continue while
       // Gemini/Groq/OpenRouter finish in the background.
-      const analysisPromise = analyzeUploadedVideo();
+      const analysisPromise = analyzeUploadedVideo({ allowDegraded: true }).catch(err => {
+        log(`⚡ مسیر تحلیل ویدئو به خط تولید تحویل نشد؛ سایر AIها مستقل ادامه می‌دهند. ${String(err?.message || err)}`, "warning");
+        return { status: "degraded", degraded: true, analysis: { summary: "", facts: [], scenes: [], script: "", providers: [] } };
+      });
       state.backgroundVideoAnalysisPromise = analysisPromise;
       videoAnalysis = await Promise.race([
         analysisPromise,
         wait(4500).then(() => null)
       ]);
-      if (videoAnalysis) {
+      if (videoAnalysis && !videoAnalysis.degraded) {
         state.conveyorReleased = true;
       } else {
         state.conveyorReleased = true;
