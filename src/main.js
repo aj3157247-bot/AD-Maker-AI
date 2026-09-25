@@ -631,7 +631,7 @@ async function runVideoAnalysisCore(options = {}) {
     parallelScoutStarted = true;
     parallelScoutPromise = (async () => {
       const captured = await captureFastScoutFrames(video, 3);
-      analysisProgress(66, "همکاری موازی AI", `Gemini، Groq و OpenRouter همزمان کار می‌کنند؛ ${captured.frames.length} فریم سریع برای تحلیل تصویری آماده شد…`);
+      log(`⚡ ${captured.frames.length} فریم سریع برای تحلیل تصویری آماده شد؛ Gemini، Groq و OpenRouter در پس‌زمینه ادامه می‌دهند.`, "info");
       log("همکاری موازی فعال شد: Gemini + OpenRouter + Groq همزمان کار می‌کنند.", "info");
       const baseBody = {
         frames: captured.frames,
@@ -764,7 +764,7 @@ async function runVideoAnalysisCore(options = {}) {
           method: "POST",
           body: form
         }, 180000);
-        analysisProgress(50, "ارسال ویدئو", "آپلود ویدئو به Gemini کامل شد.");
+        analysisSetProgress(50, "ارسال ویدئو", "آپلود ویدئو به Gemini کامل شد.");
         log("مرحله ۱: ویدئو کامل به Gemini ارسال و ثبت شد.", "success");
         fileName = fileInfo?.fileName || "";
         if (!fileName) throw new Error("Gemini فایل نهایی را ثبت نکرد.");
@@ -793,7 +793,7 @@ async function runVideoAnalysisCore(options = {}) {
         if (polls > 90) throw new Error("پردازش فایل در Gemini بیش از حد طول کشید. ویدئوی کوتاه‌تر یا کم‌حجم‌تر امتحان کن.");
       }
 
-      analysisProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
+      analysisSetProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
       log("مرحله ۲: فایل آماده شد؛ تحلیل پس‌زمینه شروع می‌شود.", "success");
       formStart = {
         fileName: fileInfoCurrent.fileName || fileName,
@@ -806,11 +806,11 @@ async function runVideoAnalysisCore(options = {}) {
         platform: platformLabel(state.platform)
       };
     } else {
-      analysisProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده است؛ تحلیل مستقیم Gemini شروع می‌شود…");
+      analysisSetProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده است؛ تحلیل مستقیم Gemini شروع می‌شود…");
       log("مرحله ۲: مسیر مستقیم ویدئو آماده شد؛ بدون URI فایل Gemini تحلیل شروع می‌شود.", "success");
     }
 
-    analysisProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی سریع و واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
+    analysisSetProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی سریع و واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
     log("مرحله ۳: تحلیل واقعی ویدئو با Gemini Interactions و اجرای پس‌زمینه شروع شد.");
     const failedModels = new Set();
     const maxFallbacks = geminiPreparationFailed ? 0 : 2;
@@ -839,7 +839,10 @@ async function runVideoAnalysisCore(options = {}) {
     // Once any valid AI result wins, the production conveyor owns the UI.
     // Slower Gemini polling must never write 68/74% back over the next stage.
     const analysisSetProgress = (...args) => {
-      if (!pipelineReleased) analysisProgress(...args);
+      // The visual-analysis lanes are workers, not the owner of the global UI.
+      // Once the conveyor watchdog releases stage 1, they must never repaint
+      // the global progress bar (especially 66/68/74%).
+      if (!pipelineReleased && !state.conveyorReleased) analysisProgress(...args);
     };
 
     // TRUE PARALLEL VIDEO ANALYSIS: Gemini, Groq and OpenRouter all enter
@@ -1215,7 +1218,9 @@ $("#scriptBtn").onclick = async () => {
       state.backgroundVideoAnalysisPromise = analysisPromise;
       videoAnalysis = await Promise.race([
         analysisPromise,
-        wait(2500).then(() => null)
+        // Hard UI handoff: video understanding is a background worker.
+        // Never let frame extraction/Gemini polling hold stage 1 hostage.
+        wait(1200).then(() => null)
       ]);
       if (videoAnalysis && !videoAnalysis.degraded) {
         state.conveyorReleased = true;
@@ -1240,7 +1245,9 @@ $("#scriptBtn").onclick = async () => {
       log("حالت ساخت سریع فعال است؛ تحلیل عمیق ویدئو برای کاهش زمان انتظار رد شد.", "info");
     }
     // Stage 01 is now genuinely complete before stage 02 becomes active.
+    // From this point the global UI belongs exclusively to the conveyor.
     state.conveyorReleased = true;
+    try { pipelineReleased = true; } catch (_) {}
     setStage(0, "done");
     setStage(1); setProgress(22, "سناریو", state.scriptMode === "manual" ? "سناریوی اختصاصی تو آماده می‌شود." : state.scriptMode === "hybrid" ? "AI سناریوی تو را حرفه‌ای‌تر و منسجم‌تر می‌کند؛ تحویل حداکثر ۸۰۰ms." : "سناریو با تحویل سریع AI ساخته می‌شود؛ AIهای دیگر همزمان در پس‌زمینه کار می‌کنند.");
     let j;
