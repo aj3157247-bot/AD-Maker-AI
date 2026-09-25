@@ -709,139 +709,94 @@ async function analyzeUploadedVideo() {
     let resultPayload = null;
     let completed = false;
     let lastFailure = null;
-    for (let attempt = 1; attempt <= maxFallbacks && !completed; attempt += 1) {
-      try {
-        setProgress(68, "تحلیل محتوای ویدئو", attempt === 1
-          ? "Gemini در حال بررسی واقعی ویدئو است…"
-          : `مدل قبلی پاسخ نداد؛ مدل جایگزین ${attempt - 1} در حال شروع است…`);
-        if (attempt > 1) log(`مدل قبلی Gemini با ظرفیت کافی پاسخ نداد؛ تلاش خودکار ${attempt - 1} از ${maxFallbacks - 1} با مدل بعدی شروع شد.`, "info");
-        // Warm up the visual specialists before waiting for Gemini. This makes
-        // the three analysis lanes genuinely concurrent rather than sequential.
-        startParallelScouts().catch(() => {});
-        const started = await startInteraction();
-        if (started?.status === "completed" && started?.analysis) {
-          resultPayload = started;
-          completed = true;
-          break;
-        }
-        const interactionId = String(started?.interactionId || started?.id || "");
-        if (!interactionId) throw new Error(started?.detail || "Gemini شناسه عملیات تحلیل را برنگرداند.");
-        const activeModel = String(started?.model || "");
-        const interactionStartedAt = Date.now();
-        // Fast capacity protection: don't leave the user watching 68% for
-        // several minutes when Gemini is clearly stuck in queue/capacity.
-        // The normal Gemini path still gets enough time for genuine processing.
-        const queuedFailoverMs = 35_000;
-        const processingFailoverMs = 75_000;
-        log(`تحلیل پس‌زمینه Gemini شروع شد${activeModel ? ` با ${activeModel}` : ""}.`, "success");
-        for (let poll = 1; poll <= 120; poll += 1) {
-          await wait(poll === 1 ? 2500 : 3000);
-          let status;
-          try {
-            status = await requestJson(`${window.location.origin}/api/analyze-video/interaction-status?id=${encodeURIComponent(interactionId)}`, {}, 45000);
-          } catch (statusError) {
-            const info = statusError?.data || {};
-            const retryable = Boolean(info.retryable) || statusError?.status === 503 || /high demand|rate limit|resource exhausted|quota|capacity|unavailable|temporar/i.test(String(statusError?.message || ""));
-            if (retryable && attempt < maxFallbacks) {
-              const failedModel = String(info.failedModel || activeModel || "");
-              if (failedModel) failedModels.add(failedModel);
-              lastFailure = statusError;
-              log(`Gemini این تلاش را به‌دلیل ظرفیت/High Demand متوقف کرد${failedModel ? ` (${failedModel})` : ""}. تلاش بعدی خودکار انجام می‌شود.`, "warning");
-              break;
-            }
-            lastFailure = statusError;
-                        startParallelScouts().catch(() => {});
-            break;
-          }
-          const st = String(status?.status || "in_progress").toLowerCase();
-          const elapsedMs = Date.now() - interactionStartedAt;
-          const capacityHint = String(status?.detail || status?.error?.message || "");
-          const looksCapacityBusy = /high demand|rate limit|resource exhausted|quota|capacity|unavailable|temporar|503|429/i.test(capacityHint);
 
-          // Gemini's background API can keep an interaction queued/in progress
-          // without returning a 503 to the browser. If that happens for too long,
-          // treat it as a capacity problem and hand off to OpenRouter instead
-          // of waiting up to ~6 minutes.
-          if (!completed && attempt < maxFallbacks &&
-              ((st === "queued" && elapsedMs >= queuedFailoverMs) ||
-               (st === "in_progress" && elapsedMs >= processingFailoverMs && looksCapacityBusy))) {
-            const failedModel = String(status?.failedModel || activeModel || "");
-            if (failedModel) failedModels.add(failedModel);
-            lastFailure = new Error(
-              st === "queued"
-                ? `Gemini بیش از ${Math.round(queuedFailoverMs / 1000)} ثانیه در صف ماند؛ انتقال هوشمند انجام می‌شود.`
-                : `Gemini ظرفیت کافی نشان نداد؛ انتقال هوشمند انجام می‌شود.`
-            );
-            log(`Gemini هنوز آماده پاسخ نیست؛ برای جلوگیری از گیرکردن روی 68٪، تحلیل موازی فعال می‌شود${failedModel ? ` (${failedModel})` : ""}.`, "warning");
-                        startParallelScouts().catch(() => {});
-            break;
-          }
-
-          // If the service explicitly reports a capacity problem, fail over
-          // immediately instead of waiting for another polling cycle.
-          if (!completed && attempt < maxFallbacks && looksCapacityBusy && /queued|in_progress/i.test(st)) {
-            const failedModel = String(status?.failedModel || activeModel || "");
-            if (failedModel) failedModels.add(failedModel);
-            lastFailure = new Error(status?.detail || "Gemini ظرفیت کافی ندارد.");
-            log(`Gemini High Demand/ظرفیت را گزارش کرد؛ تحلیل موازی OpenRouter + Groq هم فعال است${failedModel ? ` (${failedModel})` : ""}.`, "warning");
-                        startParallelScouts().catch(() => {});
-            break;
-          }
-
-          if (status?.status === "completed" && status?.analysis) {
-            resultPayload = status;
-            completed = true;
-                        break;
-          }
-          if (["failed", "cancelled", "incomplete", "budget_exceeded"].includes(st)) {
-            const retryable = Boolean(status?.retryable);
-            if (retryable && attempt < maxFallbacks) {
-              const failedModel = String(status?.failedModel || activeModel || "");
-              if (failedModel) failedModels.add(failedModel);
-              lastFailure = new Error(status?.detail || `تحلیل Gemini با وضعیت ${st} پایان یافت.`);
-              log(`Gemini این تلاش را به‌دلیل ظرفیت/High Demand متوقف کرد${failedModel ? ` (${failedModel})` : ""}. تلاش بعدی خودکار انجام می‌شود.`, "warning");
-              break;
-            }
-            lastFailure = new Error(status?.detail || `تحلیل Gemini با وضعیت ${st} پایان یافت.`);
-            break;
-          }
-          const percent = Math.min(88, 68 + Math.round((poll / 120) * 18));
-          setProgress(percent, "تحلیل محتوای ویدئو", `Gemini در حال بررسی ویدئو است… وضعیت: ${st === "queued" ? "در صف" : "در حال پردازش"}`);
-          if (poll === 1 || poll % 10 === 0) log(`تحلیل Gemini هنوز در حال انجام است… (${Math.round(poll * 3 / 60)} دقیقه)`, "info");
+    // TRUE PARALLEL VIDEO ANALYSIS: Gemini, Groq and OpenRouter all enter
+    // the same race. The first valid analysis unlocks the next stage.
+    const pollGemini = async (started, activeModel = "") => {
+      if (started?.status === "completed" && started?.analysis) return started;
+      const interactionId = String(started?.interactionId || started?.id || "");
+      if (!interactionId) throw new Error(started?.detail || "Gemini شناسه عملیات تحلیل را برنگرداند.");
+      const interactionStartedAt = Date.now();
+      log(`تحلیل Gemini همزمان با Groq و OpenRouter ادامه دارد${activeModel ? ` با ${activeModel}` : ""}.`, "success");
+      for (let poll = 1; poll <= 40; poll += 1) {
+        await wait(poll === 1 ? 1800 : 2200);
+        const status = await requestJson(`${window.location.origin}/api/analyze-video/interaction-status?id=${encodeURIComponent(interactionId)}`, {}, 30000);
+        const st = String(status?.status || "in_progress").toLowerCase();
+        const elapsedMs = Date.now() - interactionStartedAt;
+        const capacityHint = String(status?.detail || status?.error?.message || "");
+        const looksCapacityBusy = /high demand|rate limit|resource exhausted|quota|capacity|unavailable|temporar|503|429/i.test(capacityHint);
+        if (status?.status === "completed" && status?.analysis) return status;
+        if (["failed", "cancelled", "incomplete", "budget_exceeded"].includes(st)) {
+          throw new Error(status?.detail || `تحلیل Gemini با وضعیت ${st} پایان یافت.`);
         }
-      } catch (e) {
-        const info = e?.data || {};
-        const retryable = Boolean(info.retryable) || e?.status === 503 || /high demand|rate limit|resource exhausted|quota|capacity|unavailable|temporar/i.test(String(e?.message || ""));
-        if (retryable && attempt < maxFallbacks) {
-          const failedModel = String(info.failedModel || "");
-          if (failedModel) failedModels.add(failedModel);
-          lastFailure = e;
-          log(`خطای موقت ظرفیت Gemini دریافت شد؛ تلاش بعدی خودکار انجام می‌شود${failedModel ? ` (${failedModel})` : ""}.`, "warning");
-          await wait(1200);
-          continue;
+        if (looksCapacityBusy || elapsedMs >= 45_000) {
+          throw new Error(looksCapacityBusy
+            ? "Gemini فعلاً ظرفیت کافی ندارد؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود."
+            : "Gemini هنوز در حال پردازش است؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود.");
         }
-        lastFailure = e;
-        break;
+        const percent = Math.min(74, 68 + Math.round((elapsedMs / 45_000) * 6));
+        setProgress(percent, "تحلیل موازی محتوا", `Gemini + Groq + OpenRouter همزمان در حال تحلیل هستند… (${st === "queued" ? "در صف Gemini" : "پردازش Gemini"})`);
+        if (poll === 1 || poll % 8 === 0) log(`تحلیل موازی هنوز در حال انجام است؛ Gemini ${st === "queued" ? "در صف" : "در حال پردازش"}.`, "info");
       }
-    }
-    if (!completed || !resultPayload) {
-      setProgress(72, "تحویل بین AIها", "Gemini پاسخ کامل نداد؛ نتیجه سریع‌تر بین OpenRouter و Groq انتخاب می‌شود…");
-      log("Gemini کامل نشد؛ OpenRouter و Groq نتیجه‌های خود را به مسیر مشترک تحویل می‌دهند.", "warning");
+      throw new Error("Gemini در زمان تعیین‌شده نتیجه نداد؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود.");
+    };
+
+    const runGeminiLane = async () => {
+      let lastError = null;
+      const attempts = maxFallbacks > 0 ? maxFallbacks : 0;
+      if (!attempts) throw new Error("Gemini مسیر آماده نیست؛ تحلیل موازی ادامه پیدا می‌کند.");
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+          setProgress(68, "تحلیل موازی محتوا", attempt === 1
+            ? "Gemini + Groq + OpenRouter همزمان در حال تحلیل ویدئو هستند…"
+            : `Gemini مدل جایگزین ${attempt - 1} را همزمان امتحان می‌کند…`);
+          if (attempt > 1) log(`تلاش جایگزین Gemini ${attempt - 1} همزمان با AIهای دیگر شروع شد.`, "info");
+          const started = await startInteraction();
+          return await pollGemini(started, String(started?.model || ""));
+        } catch (e) {
+          lastError = e;
+          const info = e?.data || {};
+          const retryable = Boolean(info.retryable) || e?.status === 503 || /high demand|rate limit|resource exhausted|quota|capacity|unavailable|temporar/i.test(String(e?.message || ""));
+          if (retryable && attempt < attempts) {
+            const failedModel = String(info.failedModel || "");
+            if (failedModel) failedModels.add(failedModel);
+            await wait(600);
+            continue;
+          }
+          throw e;
+        }
+      }
+      throw lastError || new Error("Gemini نتیجه قابل استفاده نداد.");
+    };
+
+    // Start every lane immediately. No provider waits for another provider.
+    const scoutLane = startParallelScouts();
+    const geminiLane = runGeminiLane();
+    log("🚀 هر سه مسیر تحلیل همزمان شروع شدند: Gemini + Groq + OpenRouter. اولین نتیجه معتبر مرحله را آزاد می‌کند.", "info");
+
+    try {
+      resultPayload = await Promise.any([geminiLane, scoutLane]);
+      completed = Boolean(resultPayload?.analysis);
+      if (completed) {
+        log(`⚡ اولین تحلیل معتبر آماده شد: ${resultPayload.provider || resultPayload.model || "Gemini"}. ادامه تولید بدون انتظار برای AI کندتر انجام می‌شود.`, "success");
+      }
+    } catch (raceError) {
+      lastFailure = raceError;
       try {
-        const fallbackPayload = await startParallelScouts();
-        if (fallbackPayload?.status === "completed" && fallbackPayload?.analysis) {
-          resultPayload = fallbackPayload;
+        const retryPayload = await startParallelScouts();
+        if (retryPayload?.status === "completed" && retryPayload?.analysis) {
+          resultPayload = retryPayload;
           completed = true;
-          log(`اولین تحلیل موازی آماده شد: ${fallbackPayload.provider || "AI"}${fallbackPayload.model ? ` / ${fallbackPayload.model}` : ""}.`, "success");
-        } else {
-          throw new Error("هیچ‌یک از موتورهای موازی پاسخ قابل استفاده ندادند.");
         }
       } catch (fallbackError) {
-        const base = lastFailure?.message ? `Gemini: ${lastFailure.message}` : "Gemini تحلیل را کامل نکرد.";
-        const second = String(fallbackError?.message || fallbackError);
-        throw new Error(`${base} | OpenRouter/Groq: ${second}`);
+        throw new Error(`${String(lastFailure?.message || "تحلیل موازی ناموفق بود.")} | Groq/OpenRouter: ${String(fallbackError?.message || fallbackError)}`);
       }
     }
+
+    if (!completed || !resultPayload?.analysis) {
+      throw new Error(String(lastFailure?.message || "هیچ‌یک از AIها تحلیل قابل استفاده ندادند."));
+    }
+
     // Never wait for a slow provider. Give already-finished specialists a very
     // short window to enrich the fastest result before scripting/voice starts.
     const extraInsights = await collectParallelInsights(1200);
