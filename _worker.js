@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "4.6.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "4.7.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), groqConfigured: Boolean(env.GROQ_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -13,6 +13,7 @@ export default {
     if (url.pathname === "/api/analyze-video/start-inline" && request.method === "POST") return startVideoAnalysisInline(request, env);
     if (url.pathname === "/api/analyze-video/interaction-status" && request.method === "GET") return analysisInteractionStatus(request, env);
     if (url.pathname === "/api/analyze-video/openrouter-fallback" && request.method === "POST") return openRouterVideoFallback(request, env);
+    if (url.pathname === "/api/analyze-video/groq-fallback" && request.method === "POST") return groqVideoFallback(request, env);
     if (url.pathname === "/api/tts" && request.method === "POST") return tts(request, env);
     return env.ASSETS.fetch(request);
   }
@@ -608,6 +609,64 @@ The script must follow the observed sequence, explain what viewers actually see,
     return json({ error: "openrouter_video_fallback_failed", detail: last.detail, retryable: [429, 500, 502, 503, 504].includes(last.status), modelsTried: models }, last.status || 503);
   } catch (e) {
     return json({ error: "openrouter_video_fallback_exception", detail: String(e?.message || e) }, 500);
+  }
+}
+
+
+async function groqVideoFallback(request, env) {
+  try {
+    if (!env.GROQ_API_KEY) return json({ error: "groq_missing_api_key", detail: "GROQ_API_KEY در Cloudflare تنظیم نشده است." }, 503);
+    const b = await request.json();
+    const frames = Array.isArray(b.frames) ? b.frames.filter(x => x && typeof x.data === "string").slice(0, 3) : [];
+    if (!frames.length) return json({ error: "frames_required", detail: "حداقل یک فریم برای Groq لازم است." }, 400);
+    const brand = String(b.brand || "").trim();
+    const description = String(b.description || "").trim();
+    const language = String(b.language || "fa").toLowerCase();
+    const duration = Math.max(15, Math.min(300, Number(b.duration) || 60));
+    const platform = String(b.platform || "YouTube Shorts");
+    const langName = { en:"English", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", fa:"Persian", ps:"Pashto", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" }[language] || "Persian";
+    const targetWords = Math.max(35, Math.min(900, Math.round(duration * 2.2)));
+    const prompt = `You are AD Maker AI's FAST visual scout. Analyze ONLY the supplied keyframes from a product/site demonstration video. Do not invent anything. Identify visible UI, product elements, text, actions, navigation, and sequence. These are representative frames, not the full video, so mark uncertain details conservatively.
+Brand: ${brand || "Unknown"}
+User description: ${description || "None provided"}
+Platform: ${platform}
+Output language: ${langName}
+Target ad duration: ${duration} seconds
+Return ONLY JSON: {"summary":"factual summary","facts":["verified visible facts"],"scenes":[{"start":"00:00","end":"00:05","title":"short title","description":"visible content"}],"script":"concise voice-over draft"}. Never invent prices, ratings, users, statistics, guarantees, locations or unsupported features.`;
+    const content = [{ type: "text", text: prompt }];
+    for (const frame of frames) {
+      content.push({ type: "text", text: `Frame timestamp: ${String(frame.time || "00:00")}` });
+      content.push({ type: "image_url", image_url: { url: frame.data } });
+    }
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${env.GROQ_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "qwen/qwen3.8-27b",
+        messages: [{ role: "user", content }],
+        temperature: 0.15,
+        max_completion_tokens: Math.min(2400, Math.max(900, targetWords * 2)),
+        response_format: { type: "json_object" }
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const msg = payload?.error?.message || `Groq HTTP ${response.status}`;
+      return json({ error: "groq_video_fallback_failed", detail: String(msg), retryable: [408, 429, 500, 502, 503, 504].includes(response.status) }, response.status || 502);
+    }
+    let text = payload?.choices?.[0]?.message?.content;
+    if (Array.isArray(text)) text = text.map(x => x?.text || "").join("\n");
+    let parsed;
+    try { parsed = parseJsonObject(String(text || "")); } catch (_) {
+      return json({ error: "groq_invalid_json", detail: "Groq پاسخ JSON معتبر نداد." }, 502);
+    }
+    const scenes = Array.isArray(parsed.scenes) ? parsed.scenes.slice(0, 20) : [];
+    const facts = Array.isArray(parsed.facts) ? parsed.facts.slice(0, 40) : [];
+    const script = String(parsed.script || "").trim();
+    if (!script && !facts.length && !scenes.length) return json({ error: "groq_empty_analysis", detail: "Groq تحلیل قابل استفاده برنگرداند." }, 502);
+    return json({ ok: true, status: "completed", provider: "groq-vision-scout", model: payload?.model || "qwen/qwen3.8-27b", summary: String(parsed.summary || ""), facts, scenes, script, framesAnalyzed: frames.length });
+  } catch (e) {
+    return json({ error: "groq_video_fallback_exception", detail: String(e?.message || e), retryable: true }, 503);
   }
 }
 
