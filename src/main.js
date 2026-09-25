@@ -472,6 +472,12 @@ async function runVideoAnalysisCore(options = {}) {
   const analysisProgress = (...args) => {
     if (!state.conveyorReleased && !pipelineReleased) setProgress(...args);
   };
+  // Declare this before any Gemini/File-API lane can call it.
+  // Keeping it above the asynchronous branches prevents the browser
+  // temporal-dead-zone error: "Cannot access 'y' before initialization".
+  const analysisSetProgress = (...args) => {
+    if (!pipelineReleased && !state.conveyorReleased) analysisProgress(...args);
+  };
   setStage(0);
   analysisProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود؛ در صورت خطای سرویس، OpenRouter Free خودکار فعال می‌شود…");
   log("تحلیل هوشمند ویدئوی معرفی شروع شد.", "info");
@@ -838,13 +844,6 @@ async function runVideoAnalysisCore(options = {}) {
 
     // Once any valid AI result wins, the production conveyor owns the UI.
     // Slower Gemini polling must never write 68/74% back over the next stage.
-    const analysisSetProgress = (...args) => {
-      // The visual-analysis lanes are workers, not the owner of the global UI.
-      // Once the conveyor watchdog releases stage 1, they must never repaint
-      // the global progress bar (especially 66/68/74%).
-      if (!pipelineReleased && !state.conveyorReleased) analysisProgress(...args);
-    };
-
     // TRUE PARALLEL VIDEO ANALYSIS: Gemini, Groq and OpenRouter all enter
     // the same race. The first valid analysis unlocks the next stage.
     const pollGemini = async (started, activeModel = "") => {
