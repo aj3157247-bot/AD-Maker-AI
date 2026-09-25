@@ -502,6 +502,49 @@ async function analyzeUploadedVideo() {
     }
   };
 
+  // Smart parallel fallback: while Gemini processes the full video, prepare a
+  // lightweight visual snapshot once and let OpenRouter + Groq work in parallel.
+  // If Gemini finishes first, their work is simply ignored. If Gemini stalls or
+  // hits High Demand, the fastest successful scout becomes the immediate result.
+  let parallelScoutPromise = null;
+  let parallelScoutTimer = null;
+  let parallelScoutStarted = false;
+  const startParallelScouts = () => {
+    if (parallelScoutPromise) return parallelScoutPromise;
+    parallelScoutStarted = true;
+    parallelScoutPromise = (async () => {
+      const captured = await captureFallbackFrames(video, 6);
+      setProgress(70, "تحلیل موازی", `Gemini در حال تحلیل کامل است؛ OpenRouter و Groq همزمان ${captured.frames.length} فریم کلیدی را بررسی می‌کنند…`);
+      log(`تحلیل موازی فعال شد: ${captured.frames.length} فریم برای OpenRouter و 3 فریم برای Groq ارسال می‌شود.`, "info");
+      const baseBody = {
+        frames: captured.frames,
+        brand: $("#brand")?.value.trim() || "",
+        description: $("#desc")?.value.trim() || "",
+        language: state.language,
+        duration: String(state.duration),
+        platform: platformLabel(state.platform)
+      };
+      const openRouterJob = requestJson(`${window.location.origin}/api/analyze-video/openrouter-fallback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(baseBody)
+      }, 120000).then(payload => {
+        if (payload?.status !== "completed" || !payload?.script) throw new Error(payload?.detail || "OpenRouter تحلیل قابل استفاده نداد.");
+        return { ...payload, analysis: { summary: payload.summary || "", facts: payload.facts || [], scenes: payload.scenes || [], script: payload.script } };
+      });
+      const groqJob = requestJson(`${window.location.origin}/api/analyze-video/groq-fallback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...baseBody, frames: captured.frames.slice(0, 3) })
+      }, 90000).then(payload => {
+        if (payload?.status !== "completed") throw new Error(payload?.detail || "Groq تحلیل قابل استفاده نداد.");
+        return { ...payload, analysis: { summary: payload.summary || "", facts: payload.facts || [], scenes: payload.scenes || [], script: payload.script || "" } };
+      });
+      return Promise.any([openRouterJob, groqJob]);
+    })();
+    return parallelScoutPromise;
+  };
+
   try {
     const size = Number(video.size || 0);
     if (!size) throw new Error("حجم ویدئو معتبر نیست.");
@@ -621,6 +664,14 @@ async function analyzeUploadedVideo() {
         const queuedFailoverMs = 35_000;
         const processingFailoverMs = 75_000;
         log(`تحلیل پس‌زمینه Gemini شروع شد${activeModel ? ` با ${activeModel}` : ""}.`, "success");
+        // Give Gemini a short head start. If it is still processing after 8s,
+        // launch the independent visual scouts so no provider sits idle.
+        if (!parallelScoutPromise && !parallelScoutTimer) {
+          parallelScoutTimer = setTimeout(() => {
+            parallelScoutTimer = null;
+            startParallelScouts().catch(() => {});
+          }, 8000);
+        }
 
         for (let poll = 1; poll <= 120; poll += 1) {
           await wait(poll === 1 ? 2500 : 3000);
@@ -638,6 +689,8 @@ async function analyzeUploadedVideo() {
               break;
             }
             lastFailure = statusError;
+            if (parallelScoutTimer) { clearTimeout(parallelScoutTimer); parallelScoutTimer = null; }
+            startParallelScouts().catch(() => {});
             break;
           }
           const st = String(status?.status || "in_progress").toLowerCase();
@@ -659,7 +712,9 @@ async function analyzeUploadedVideo() {
                 ? `Gemini بیش از ${Math.round(queuedFailoverMs / 1000)} ثانیه در صف ماند؛ انتقال هوشمند انجام می‌شود.`
                 : `Gemini ظرفیت کافی نشان نداد؛ انتقال هوشمند انجام می‌شود.`
             );
-            log(`Gemini هنوز آماده پاسخ نیست؛ برای جلوگیری از گیرکردن روی 68٪، مسیر جایگزین فعال می‌شود${failedModel ? ` (${failedModel})` : ""}.`, "warning");
+            log(`Gemini هنوز آماده پاسخ نیست؛ برای جلوگیری از گیرکردن روی 68٪، تحلیل موازی فعال می‌شود${failedModel ? ` (${failedModel})` : ""}.`, "warning");
+            if (parallelScoutTimer) { clearTimeout(parallelScoutTimer); parallelScoutTimer = null; }
+            startParallelScouts().catch(() => {});
             break;
           }
 
@@ -669,13 +724,16 @@ async function analyzeUploadedVideo() {
             const failedModel = String(status?.failedModel || activeModel || "");
             if (failedModel) failedModels.add(failedModel);
             lastFailure = new Error(status?.detail || "Gemini ظرفیت کافی ندارد.");
-            log(`Gemini High Demand/ظرفیت را گزارش کرد؛ مدل بعدی فوراً امتحان می‌شود${failedModel ? ` (${failedModel})` : ""}.`, "warning");
+            log(`Gemini High Demand/ظرفیت را گزارش کرد؛ تحلیل موازی OpenRouter + Groq هم فعال است${failedModel ? ` (${failedModel})` : ""}.`, "warning");
+            if (parallelScoutTimer) { clearTimeout(parallelScoutTimer); parallelScoutTimer = null; }
+            startParallelScouts().catch(() => {});
             break;
           }
 
           if (status?.status === "completed" && status?.analysis) {
             resultPayload = status;
             completed = true;
+            if (parallelScoutTimer) { clearTimeout(parallelScoutTimer); parallelScoutTimer = null; }
             break;
           }
           if (["failed", "cancelled", "incomplete", "budget_exceeded"].includes(st)) {
@@ -710,35 +768,22 @@ async function analyzeUploadedVideo() {
       }
     }
     if (!completed || !resultPayload) {
-      setProgress(72, "موتور جایگزین", "Gemini ظرفیت کافی نداشت؛ OpenRouter Free فوراً در حال آماده‌سازی است…");
-      log("Gemini ظرفیت/High Demand داشت؛ OpenRouter Free با Failover خودکار و چند مدل چندرسانه‌ای فعال شد.", "warning");
+      setProgress(72, "موتورهای موازی", "Gemini پاسخ کامل نداد؛ سریع‌ترین تحلیل معتبر از OpenRouter یا Groq انتخاب می‌شود…");
+      log("Gemini ظرفیت/High Demand داشت؛ OpenRouter و Groq به‌صورت موازی در حال تحلیل فریم‌های کلیدی هستند.", "warning");
       try {
-        const captured = await captureFallbackFrames(video, 12);
-        setProgress(76, "موتور جایگزین", `${captured.frames.length} فریم سبک‌شده آماده شد؛ OpenRouter در حال انتخاب خودکار مدل رایگان مناسب است…`);
-        log(`برای OpenRouter ${captured.frames.length} فریم کلیدی سبک‌شده از ویدئو استخراج شد.`, "info");
-        const fallbackPayload = await requestJson(`${window.location.origin}/api/analyze-video/openrouter-fallback`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            frames: captured.frames,
-            brand: $("#brand")?.value.trim() || "",
-            description: $("#desc")?.value.trim() || "",
-            language: state.language,
-            duration: String(state.duration),
-            platform: platformLabel(state.platform)
-          })
-        }, 180000);
-        if (fallbackPayload?.status === "completed" && fallbackPayload?.script) {
-          resultPayload = { ...fallbackPayload, analysis: { summary: fallbackPayload.summary || "", facts: fallbackPayload.facts || [], scenes: fallbackPayload.scenes || [], script: fallbackPayload.script } };
+        if (parallelScoutTimer) { clearTimeout(parallelScoutTimer); parallelScoutTimer = null; }
+        const fallbackPayload = await startParallelScouts();
+        if (fallbackPayload?.status === "completed" && fallbackPayload?.analysis) {
+          resultPayload = fallbackPayload;
           completed = true;
-          log(`OpenRouter Free تحلیل را کامل کرد${fallbackPayload.model ? ` با ${fallbackPayload.model}` : ""}.`, "success");
+          log(`تحلیل موازی با موفقیت انجام شد: ${fallbackPayload.provider || "AI"}${fallbackPayload.model ? ` / ${fallbackPayload.model}` : ""}.`, "success");
         } else {
-          throw new Error(fallbackPayload?.detail || "OpenRouter پاسخ قابل استفاده برنگرداند.");
+          throw new Error("هیچ‌یک از موتورهای موازی پاسخ قابل استفاده ندادند.");
         }
       } catch (fallbackError) {
         const base = lastFailure?.message ? `Gemini: ${lastFailure.message}` : "Gemini تحلیل را کامل نکرد.";
         const second = String(fallbackError?.message || fallbackError);
-        throw new Error(`${base} | OpenRouter Free: ${second}`);
+        throw new Error(`${base} | OpenRouter/Groq: ${second}`);
       }
     }
     setProgress(92, "تحلیل محتوای ویدئو", "تحلیل صحنه‌ها کامل شد؛ در حال آماده‌سازی سناریو…");
