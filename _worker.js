@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "4.5.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "4.6.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
@@ -305,9 +305,18 @@ For the script: narrate the actual sequence of the video so the voice matches wh
       return null;
     }
 
-    // Agentic first, then static if the account/model cannot start agentic.
-    let created = await tryCreate(agenticModels, "agentic");
-    if (!created) created = await tryCreate(staticModels, "static");
+    // For this product the selected duration is capped at 5 minutes.
+    // Google recommends static processing for latency-sensitive videos under
+    // 5 minutes; agentic navigation is more useful for longer/complex videos.
+    // Start static first to reduce time-to-result and High Demand exposure.
+    let created = null;
+    if (duration <= 300) {
+      created = await tryCreate(staticModels, "static");
+      if (!created) created = await tryCreate(agenticModels, "agentic");
+    } else {
+      created = await tryCreate(agenticModels, "agentic");
+      if (!created) created = await tryCreate(staticModels, "static");
+    }
 
     if (!created) {
       const dailyQuota = lastStatus === 429 && /per day|daily|requests per day|GenerateRequestsPerDay|quota.*day|quotaValue/i.test(lastError);
@@ -502,9 +511,8 @@ The script must follow the observed sequence, explain what viewers actually see,
       content.push({ type: "text", text: `Frame timestamp: ${String(frame.time || "00:00")}` });
       content.push({ type: "image_url", image_url: { url: frame.data } });
     }
-    // OpenRouter accepts at most 3 models in a single fallback list.
-    // Keep server-side failover, but send the 5-model pool in small batches.
-    // This fixes: "models array must have 3 items or fewer".
+    // OpenRouter accepts at most 3 models in a single `models` fallback list.
+    // Use small batches so the complete free-model pool can still be tried.
     const models = [
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
       "google/gemma-4-26b-a4b-it:free",
@@ -550,10 +558,7 @@ The script must follow the observed sequence, explain what viewers actually see,
               try {
                 parsed = parseJsonObject(text);
               } catch (_) {
-                last = {
-                  status: 502,
-                  detail: `OpenRouter پاسخ JSON معتبر نداد${payload?.model ? ` (${payload.model})` : ""}.`
-                };
+                last = { status: 502, detail: `OpenRouter پاسخ JSON معتبر نداد${payload?.model ? ` (${payload.model})` : ""}.` };
                 if (attempt === 0) { await sleep(1200); continue; }
                 break;
               }
@@ -576,30 +581,15 @@ The script must follow the observed sequence, explain what viewers actually see,
                 });
               }
 
-              last = {
-                status: 502,
-                detail: `OpenRouter سناریوی صوتی قابل استفاده برنگرداند${payload?.model ? ` (${payload.model})` : ""}.`
-              };
+              last = { status: 502, detail: `OpenRouter سناریوی صوتی قابل استفاده برنگرداند${payload?.model ? ` (${payload.model})` : ""}.` };
             } else {
-              last = {
-                status: 502,
-                detail: `OpenRouter پاسخ متنی قابل استفاده برنگرداند${payload?.model ? ` (${payload.model})` : ""}.`
-              };
+              last = { status: 502, detail: `OpenRouter پاسخ متنی قابل استفاده برنگرداند${payload?.model ? ` (${payload.model})` : ""}.` };
             }
           } else {
             const err = payload?.error || {};
-            last = {
-              status: r.status || 502,
-              detail: String(err.message || `OpenRouter پاسخ HTTP ${r.status || 502} برگرداند.`)
-            };
-
+            last = { status: r.status || 502, detail: String(err.message || `OpenRouter پاسخ HTTP ${r.status || 502} برگرداند.`) };
             if ([401, 403, 402].includes(r.status)) {
-              return json({
-                error: "openrouter_video_fallback_failed",
-                detail: last.detail,
-                retryable: false,
-                modelsTried: models
-              }, last.status || 503);
+              return json({ error: "openrouter_video_fallback_failed", detail: last.detail, retryable: false, modelsTried: models }, last.status || 503);
             }
           }
 
@@ -607,24 +597,15 @@ The script must follow the observed sequence, explain what viewers actually see,
             await sleep(last.status === 429 ? 2200 : 1400);
             continue;
           }
-
           break;
         } catch (e) {
           last = { status: 503, detail: String(e?.message || e) };
-          if (attempt === 0) {
-            await sleep(1400);
-            continue;
-          }
+          if (attempt === 0) { await sleep(1400); continue; }
         }
       }
     }
 
-    return json({
-      error: "openrouter_video_fallback_failed",
-      detail: last.detail,
-      retryable: [429, 500, 502, 503, 504].includes(last.status),
-      modelsTried: models
-    }, last.status || 503);
+    return json({ error: "openrouter_video_fallback_failed", detail: last.detail, retryable: [429, 500, 502, 503, 504].includes(last.status), modelsTried: models }, last.status || 503);
   } catch (e) {
     return json({ error: "openrouter_video_fallback_exception", detail: String(e?.message || e) }, 500);
   }
