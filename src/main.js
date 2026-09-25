@@ -1150,12 +1150,15 @@ $("#scriptBtn").onclick = async () => {
           }
         } catch (_) {}
       }
-      // AI WORK POOL: every configured AI gets the same verified context now.
-      // The first usable script unlocks the production lane; slower specialists
-      // keep working and their results are retained for the next stage.
+      // AI CONVEYOR: the script lane is NEVER allowed to become a hard gate.
+      // All text specialists receive the same verified context, but the browser
+      // moves forward as soon as a usable script exists. If no AI has answered
+      // within a very short hand-off window, a verified local draft is used so
+      // ElevenLabs/rendering can start while the AI specialists keep working.
+      let contextualPoolPromise = null;
       try {
-        log("🚀 اتاق کار AI فعال است؛ سناریو و تحلیل ویدئو همزمان جلو می‌روند.", "info");
-        const contextualPoolPromise = api("/api/ai/work-pool", {
+        log("🚀 نوار نقاله AI فعال است؛ همه موتورهای متنی همزمان روی سناریو/برنامه تولید کار می‌کنند و هیچ‌کدام گلوگاه نیستند.", "info");
+        contextualPoolPromise = api("/api/ai/work-pool", {
           brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "",
           scriptMode: state.scriptMode, language: state.language, duration: state.duration,
           targetWords, phase: "script",
@@ -1165,29 +1168,46 @@ $("#scriptBtn").onclick = async () => {
             scenes: Array.isArray(currentAnalysis.scenes) ? currentAnalysis.scenes : [],
             script: currentAnalysis.script || ""
           }
-        }, 15000).catch(() => null);
-        // Prefer the video-aware pool if it is already fast; otherwise use the
-        // already-running provisional pool so no AI time is wasted.
-        const pool = await Promise.race([
-          contextualPoolPromise,
-          earlyScriptPoolPromise || Promise.resolve(null),
-          wait(4500).then(() => null)
-        ]);
-        if (pool?.script) {
-          j = { script: String(pool.script).trim(), fallback: false, provider: pool.provider || "ai-work-pool" };
-          log(`⚡ سناریو آزاد شد؛ ${Array.isArray(pool.providers) ? pool.providers.length : 1} موتور AI در مسیر تولید قرار گرفتند.`, "success");
-          if (Array.isArray(pool.providers) && pool.providers.length) log(`همکاران سناریو: ${pool.providers.join(" + ")}.`, "info");
-        }
-      } catch (poolError) {
-        log(`اتاق کار AI هنوز در حال کار است؛ مسیر آماده تحلیل/سناریو ادامه پیدا می‌کند. ${String(poolError?.message || poolError)}`, "info");
-      }
+        }, 12000).catch(() => null);
 
-      if (!j) {
+        // A video-derived script is already AI-grounded and is preferable to
+        // waiting again. If it is absent, give the two already-running script
+        // pools only 1.8s to hand off; otherwise immediately unlock TTS.
         const analyzedScript = String(currentAnalysis.script || "").trim();
         if (analyzedScript) {
           j = { script: analyzedScript, fallback: false, provider: currentAnalysis.providers?.[0] || "video-analysis" };
-          log("سناریوی معتبر تحلیل ویدئو مستقیم وارد گویندگی شد؛ AIهای دیگر در پس‌زمینه ادامه می‌دهند.", "success");
+          log("⚡ سناریوی استخراج‌شده از تحلیل ویدئو فوراً وارد خط تولید شد؛ AIهای متنی همزمان آن را غنی می‌کنند.", "success");
+        } else {
+          const pool = await Promise.race([
+            contextualPoolPromise,
+            earlyScriptPoolPromise || Promise.resolve(null),
+            wait(1800).then(() => null)
+          ]);
+          if (pool?.script) {
+            j = { script: String(pool.script).trim(), fallback: false, provider: pool.provider || "ai-work-pool" };
+            log(`⚡ سناریو در پنجره سریع آماده شد؛ ${Array.isArray(pool.providers) ? pool.providers.length : 1} موتور AI درگیر شدند.`, "success");
+            if (Array.isArray(pool.providers) && pool.providers.length) log(`همکاران سناریو: ${pool.providers.join(" + ")}.`, "info");
+          }
         }
+
+        if (!j) {
+          // Do not make the whole production wait for a slow text provider.
+          // This draft contains only user-provided facts; the AI pools continue
+          // in the background and the production-plan pool gets the same context.
+          j = { script: fallbackScript(brand, desc), fallback: true, provider: "verified-draft" };
+          log("⚡ هیچ AI متنی در پنجره سریع پاسخ نداد؛ پیش‌نویس مبتنی بر اطلاعات کاربر وارد گویندگی شد و همه AIها در پس‌زمینه ادامه می‌دهند.", "info");
+        }
+      } catch (poolError) {
+        j = { script: fallbackScript(brand, desc), fallback: true, provider: "verified-draft" };
+        log(`گلوگاه سناریو حذف شد؛ خط تولید بدون انتظار ادامه یافت. ${String(poolError?.message || poolError)}`, "info");
+      }
+
+      // If the contextual AI finishes while we are entering TTS, upgrade the
+      // script before voice generation starts. This is bounded and never blocks
+      // the conveyor beyond the short hand-off above.
+      if (!j?.script && contextualPoolPromise) {
+        const late = await Promise.race([contextualPoolPromise, wait(500).then(() => null)]);
+        if (late?.script) j = { script: String(late.script).trim(), fallback: false, provider: late.provider || "ai-work-pool" };
       }
 
       if (!j) {
