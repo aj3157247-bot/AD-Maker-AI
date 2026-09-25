@@ -482,7 +482,7 @@ async function analyzeUploadedVideo() {
       const canvas = document.createElement("canvas");
       const sourceW = el.videoWidth || 1280;
       const sourceH = el.videoHeight || 720;
-      const width = Math.min(560, sourceW);
+      const width = Math.min(480, sourceW);
       const height = Math.max(240, Math.round(width * sourceH / sourceW));
       canvas.width = width; canvas.height = height;
       const ctx = canvas.getContext("2d", { alpha: false });
@@ -491,7 +491,7 @@ async function analyzeUploadedVideo() {
         const time = count === 1 ? 0 : Math.min(Math.max(0, duration - 0.15), (duration * i) / (count - 1));
         await seek(time);
         ctx.drawImage(el, 0, 0, width, height);
-        const data = canvas.toDataURL("image/jpeg", 0.48);
+        const data = canvas.toDataURL("image/jpeg", 0.42);
         frames.push({ time: formatVideoTime(time), data });
       }
       return { frames, duration };
@@ -500,6 +500,75 @@ async function analyzeUploadedVideo() {
       el.removeAttribute("src");
       el.load();
     }
+  };
+
+  // Fast scout capture: use independent video decoders so the 3 keyframes are
+  // decoded concurrently instead of seeking one-by-one on a single element.
+  // This is the critical latency fix for the 74% analysis plateau on Android.
+  const captureFastScoutFrames = async (file, maxFrames = 3) => {
+    const masterUrl = URL.createObjectURL(file);
+    try {
+      const probe = document.createElement("video");
+      probe.preload = "metadata";
+      probe.muted = true;
+      probe.playsInline = true;
+      probe.src = masterUrl;
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { cleanup(); reject(new Error("تشخیص مدت ویدئو بیش از حد طول کشید.")); }, 7000);
+        const cleanup = () => { clearTimeout(timer); probe.removeEventListener("loadedmetadata", done); probe.removeEventListener("error", fail); };
+        const done = () => { cleanup(); resolve(); };
+        const fail = () => { cleanup(); reject(new Error("مرورگر نتوانست ویدئو را برای تحلیل سریع باز کند.")); };
+        probe.addEventListener("loadedmetadata", done, { once: true });
+        probe.addEventListener("error", fail, { once: true });
+        probe.load();
+      });
+      const duration = Number.isFinite(probe.duration) && probe.duration > 0 ? probe.duration : 60;
+      probe.removeAttribute("src"); probe.load();
+      const count = Math.max(2, Math.min(3, maxFrames));
+      const times = count === 2 ? [0, Math.max(0, duration - 0.15)] : [0, duration * 0.5, Math.max(0, duration - 0.15)];
+      const captureOne = async (time, index) => {
+        const el = document.createElement("video");
+        el.preload = "auto"; el.muted = true; el.playsInline = true; el.src = masterUrl;
+        const waitEvent = (name, timeout = 7000) => new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { cleanup(); reject(new Error("بارگذاری فریم سریع بیش از حد طول کشید.")); }, timeout);
+          const done = () => { cleanup(); resolve(); };
+          const fail = () => { cleanup(); reject(new Error("خواندن فریم سریع ناموفق بود.")); };
+          const cleanup = () => { clearTimeout(timer); el.removeEventListener(name, done); el.removeEventListener("error", fail); };
+          el.addEventListener(name, done, { once: true }); el.addEventListener("error", fail, { once: true });
+        });
+        const seek = new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { cleanup(); reject(new Error("جابجایی فریم سریع بیش از حد طول کشید.")); }, 7000);
+          const done = () => { cleanup(); resolve(); };
+          const fail = () => { cleanup(); reject(new Error("seek فریم سریع ناموفق بود.")); };
+          const cleanup = () => { clearTimeout(timer); el.removeEventListener("seeked", done); el.removeEventListener("error", fail); };
+          el.addEventListener("seeked", done, { once: true }); el.addEventListener("error", fail, { once: true });
+          try { el.currentTime = Math.max(0, Math.min(time, Math.max(0, (el.duration || duration) - 0.05))); } catch (e) { cleanup(); reject(e); }
+        });
+        try {
+          el.load();
+          await waitEvent("loadedmetadata");
+          // currentTime may have been set before metadata on some Android WebViews;
+          // perform the seek only after duration is known.
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => { cleanup(); reject(new Error("seek فریم سریع ناموفق بود.")); }, 7000);
+            const done = () => { cleanup(); resolve(); };
+            const fail = () => { cleanup(); reject(new Error("خواندن فریم سریع ناموفق بود.")); };
+            const cleanup = () => { clearTimeout(timer); el.removeEventListener("seeked", done); el.removeEventListener("error", fail); };
+            el.addEventListener("seeked", done, { once: true }); el.addEventListener("error", fail, { once: true });
+            try { el.currentTime = Math.max(0, Math.min(time, Math.max(0, (el.duration || duration) - 0.05))); } catch (e) { cleanup(); reject(e); }
+          });
+          const sourceW = el.videoWidth || 1280, sourceH = el.videoHeight || 720;
+          const width = Math.min(420, sourceW), height = Math.max(220, Math.round(width * sourceH / sourceW));
+          const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
+          const ctx = canvas.getContext("2d", { alpha: false }); ctx.drawImage(el, 0, 0, width, height);
+          return { index, time: formatVideoTime(time), data: canvas.toDataURL("image/jpeg", 0.38) };
+        } finally {
+          el.removeAttribute("src"); el.load();
+        }
+      };
+      const frames = (await Promise.all(times.map((t, i) => captureOne(t, i)))).sort((a, b) => a.index - b.index);
+      return { frames: frames.map(({ time, data }) => ({ time, data })), duration };
+    } finally { URL.revokeObjectURL(masterUrl); }
   };
 
   // Coordinated multi-AI pipeline: Gemini, OpenRouter and Groq work in parallel.
@@ -514,7 +583,7 @@ async function analyzeUploadedVideo() {
     if (parallelScoutPromise) return parallelScoutPromise;
     parallelScoutStarted = true;
     parallelScoutPromise = (async () => {
-      const captured = await captureFallbackFrames(video, 4);
+      const captured = await captureFastScoutFrames(video, 3);
       setProgress(66, "همکاری موازی AI", `Gemini، Groq و OpenRouter همزمان کار می‌کنند؛ ${captured.frames.length} فریم سریع برای تحلیل تصویری آماده شد…`);
       log("همکاری موازی فعال شد: Gemini + OpenRouter + Groq همزمان کار می‌کنند.", "info");
       const baseBody = {
@@ -718,8 +787,8 @@ async function analyzeUploadedVideo() {
       if (!interactionId) throw new Error(started?.detail || "Gemini شناسه عملیات تحلیل را برنگرداند.");
       const interactionStartedAt = Date.now();
       log(`تحلیل Gemini همزمان با Groq و OpenRouter ادامه دارد${activeModel ? ` با ${activeModel}` : ""}.`, "success");
-      for (let poll = 1; poll <= 40; poll += 1) {
-        await wait(poll === 1 ? 1800 : 2200);
+      for (let poll = 1; poll <= 12; poll += 1) {
+        await wait(poll === 1 ? 1200 : 1500);
         const status = await requestJson(`${window.location.origin}/api/analyze-video/interaction-status?id=${encodeURIComponent(interactionId)}`, {}, 30000);
         const st = String(status?.status || "in_progress").toLowerCase();
         const elapsedMs = Date.now() - interactionStartedAt;
@@ -729,13 +798,13 @@ async function analyzeUploadedVideo() {
         if (["failed", "cancelled", "incomplete", "budget_exceeded"].includes(st)) {
           throw new Error(status?.detail || `تحلیل Gemini با وضعیت ${st} پایان یافت.`);
         }
-        if (looksCapacityBusy || elapsedMs >= 18_000) {
+        if (looksCapacityBusy || elapsedMs >= 7_000) {
           throw new Error(looksCapacityBusy
             ? "Gemini فعلاً ظرفیت کافی ندارد؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود."
             : "Gemini هنوز در حال پردازش است؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود.");
         }
-        const percent = Math.min(74, 68 + Math.round((elapsedMs / 18_000) * 6));
-        setProgress(percent, "تحلیل موازی محتوا", `Gemini + Groq + OpenRouter همزمان در حال تحلیل هستند… (${st === "queued" ? "در صف Gemini" : "پردازش Gemini"})`);
+        const percent = Math.min(74, 68 + Math.round((elapsedMs / 7_000) * 6));
+        if (!parallelScoutResults.length) setProgress(percent, "تحلیل موازی محتوا", `Gemini + Groq + OpenRouter همزمان در حال تحلیل هستند… (${st === "queued" ? "در صف Gemini" : "پردازش Gemini"})`); else setProgress(Math.max(74, percent), "همکاری AI", `نتیجه سریع AI آماده شده؛ Gemini و سایر AIها در پس‌زمینه ادامه می‌دهند…`);
         if (poll === 1 || poll % 8 === 0) log(`تحلیل موازی هنوز در حال انجام است؛ Gemini ${st === "queued" ? "در صف" : "در حال پردازش"}.`, "info");
       }
       throw new Error("Gemini در زمان کوتاه نتیجه نداد؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود.");
@@ -799,13 +868,21 @@ async function analyzeUploadedVideo() {
 
     // Never wait for a slow provider. Give already-finished specialists a very
     // short window to enrich the fastest result before scripting/voice starts.
-    const extraInsights = await collectParallelInsights(700);
+    const extraInsights = await collectParallelInsights(900);
     const coordinatedResult = mergeAiAnalyses(resultPayload, extraInsights);
+    // Keep the slower specialists alive after the first winner. Their late
+    // results are attached to the analysis object and consumed by the script
+    // stage if they finish while the next AI tasks are running.
+    const lateEnrichmentPromise = collectParallelInsights(4500).then(late => {
+      if (!Array.isArray(late) || !late.length) return coordinatedResult || resultPayload.analysis;
+      return mergeAiAnalyses(resultPayload, late);
+    }).catch(() => coordinatedResult || resultPayload.analysis);
     if (coordinatedResult?.coordinated) {
       log(`هماهنگی AI کامل شد: ${coordinatedResult.providers.length} موتور در زمینه مشترک استفاده شدند (${coordinatedResult.providers.join(" + ")}).`, "success");
     }
     setProgress(92, "هماهنگی AI", "نتایج AIها در یک زمینه مشترک جمع شد؛ سناریو از اطلاعات تأییدشده ساخته می‌شود…");
     const result = coordinatedResult || resultPayload.analysis;
+    try { Object.defineProperty(result, "_lateEnrichmentPromise", { value: lateEnrichmentPromise, enumerable: false, configurable: true }); } catch (_) {}
 
     state.videoAnalysis = result;
     updateVideoAnalysisUI();
@@ -1059,6 +1136,20 @@ $("#scriptBtn").onclick = async () => {
     } else {
       const targetWords = targetWordsForDuration(state.duration);
       const currentAnalysis = videoAnalysis || {};
+      // Give the slower visual specialists a short hand-off window. This is
+      // deliberately bounded so Gemini/OpenRouter/Groq can continue working
+      // without blocking the whole production pipeline.
+      if (currentAnalysis?._lateEnrichmentPromise) {
+        try {
+          const enriched = await Promise.race([currentAnalysis._lateEnrichmentPromise, wait(2200).then(() => null)]);
+          if (enriched?.summary || enriched?.facts?.length || enriched?.scenes?.length) {
+            videoAnalysis = enriched;
+            state.videoAnalysis = enriched;
+            updateVideoAnalysisUI();
+            log(`🤝 نتیجه دیررس AIها قبل از سناریو ادغام شد؛ ${Array.isArray(enriched.providers) ? enriched.providers.length : 1} موتور در زمینه مشترک هستند.`, "success");
+          }
+        } catch (_) {}
+      }
       // AI WORK POOL: every configured AI gets the same verified context now.
       // The first usable script unlocks the production lane; slower specialists
       // keep working and their results are retained for the next stage.
