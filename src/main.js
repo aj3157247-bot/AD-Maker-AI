@@ -1772,4 +1772,364 @@ async function renderVideo(voiceBlob) {
 
       // Readable glass subtitle card with compact lines.
       const cardX = 42, cardW = W - 84, cardH = caption ? 238 : 150, cardY = H - 390;
-      roundRect(ctx, cardX, cardY, cardW, cardH, 28, "rgba(8,8,14,.62)", "r
+      roundRect(ctx, cardX, cardY, cardW, cardH, 28, "rgba(8,8,14,.62)", "rgba(255,255,255,.14)");
+      ctx.fillStyle = state.brandColor; roundRect(ctx, cardX + 24, cardY + 24, 8, cardH - 48, 4, state.brandColor, null);
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(255,255,255,.64)"; ctx.font = "700 14px Vazirmatn,Arial";
+      ctx.fillText(styleLabel(), W / 2, cardY + 52);
+      ctx.fillStyle = "#fff"; ctx.font = "800 28px Vazirmatn,Arial";
+      if (caption) wrap(ctx, caption.text, W / 2, cardY + 98, cardW - 78, 42, 4);
+
+      // Fine progress rail.
+      ctx.fillStyle = "rgba(255,255,255,.18)"; roundRect(ctx, 42, H - 88, W - 84, 6, 3, "rgba(255,255,255,.18)", null);
+      ctx.fillStyle = state.brandColor; roundRect(ctx, 42, H - 88, (W - 84) * p, 6, 3, state.brandColor, null);
+      ctx.fillStyle = "rgba(255,255,255,.72)"; ctx.font = "700 15px Vazirmatn,Arial";
+      ctx.fillText(`${Math.round(p * 100)}%`, W / 2, H - 50);
+      setProgress(66 + p * 32, "رندر ویدئو", `${Math.round(p * 100)}٪ از ویدئو ساخته شد`);
+    };
+
+    drawFrame(0);
+    voiceSource.start(0); if (musicSource) musicSource.start(0);
+    rec.start(250);
+
+    await new Promise((resolve, reject) => {
+      let raf = 0;
+      const tick = now => {
+        try {
+          const elapsed = now - start;
+          drawFrame(elapsed);
+          if (elapsed < total) raf = requestAnimationFrame(tick);
+          else {
+            cancelAnimationFrame(raf);
+            drawFrame(total - 1);
+            setTimeout(() => { if (rec.state !== "inactive") rec.stop(); resolve(); }, 180);
+          }
+        } catch (e) {
+          cancelAnimationFrame(raf); if (rec.state !== "inactive") rec.stop(); reject(e);
+        }
+      };
+      raf = requestAnimationFrame(tick);
+    });
+
+    const blob = await done;
+    if (blob.size < 10000) throw new Error("فایل ویدئو بسیار کوچک یا خالی ساخته شد. دوباره تلاش کن.");
+    return blob;
+  } finally {
+    try { voiceSource?.stop(); } catch (_) {}
+    try { musicSource?.stop(); } catch (_) {}
+    try { await audioCtx?.close(); } catch (_) {}
+    media.filter(x => x.type === "video").forEach(x => { try { x.el.pause(); } catch (_) {} });
+    urls.forEach(u => URL.revokeObjectURL(u));
+    for (const u of urlsForPreparedAssets) { try { URL.revokeObjectURL(u); } catch (_) {} }
+    urlsForPreparedAssets.clear();
+  }
+}
+
+function buildCaptionTimeline(text, durationSeconds) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (!clean) return [];
+  const sentences = clean.split(/(?<=[.!?؟،؛])\s+/).filter(Boolean);
+  const chunks = [];
+  for (const sentence of sentences) {
+    const words = sentence.trim().split(/\s+/).filter(Boolean);
+    for (let i = 0; i < words.length; i += 9) chunks.push(words.slice(i, i + 9).join(" "));
+  }
+  const list = chunks.length ? chunks : [clean];
+  const totalWords = list.reduce((n, x) => n + x.split(/\s+/).length, 0);
+  let cursor = 0;
+  return list.map(text => {
+    const words = text.split(/\s+/).length;
+    const start = cursor / totalWords;
+    cursor += words;
+    return { text, start, end: cursor / totalWords };
+  });
+}
+
+function captionAt(timeline, elapsedMs, durationMs) {
+  if (!timeline.length) return null;
+  const duration = Math.max(1, Number(durationMs) || 1);
+  const p = Math.min(0.9999, Math.max(0, elapsedMs / duration));
+  return timeline.find(x => p >= x.start && p < x.end) || timeline[timeline.length - 1];
+}
+
+function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
+}
+
+function brandText() { return $("#brand")?.value?.trim() || "AD Maker AI"; }
+function styleLabel() {
+  return platformLabel(state.platform).toUpperCase();
+}
+
+function safeExt(name, fallback = "bin") {
+  const m = String(name || "").toLowerCase().match(/\.([a-z0-9]{2,8})(?:$|\?)/);
+  return m ? m[1] : fallback;
+}
+
+async function ffmpegConvert(file, outputExt, args) {
+  const ffmpeg = await loadFfmpeg();
+  const input = `input-${Date.now()}-${Math.random().toString(16).slice(2)}.${safeExt(file.name, "bin")}`;
+  const output = `output-${Date.now()}-${Math.random().toString(16).slice(2)}.${outputExt}`;
+  try {
+    await ffmpeg.writeFile(input, new Uint8Array(await file.arrayBuffer()));
+    await ffmpeg.exec(["-y", "-i", input, ...args, output]);
+    const data = await ffmpeg.readFile(output);
+    if (!data || !data.length) throw new Error("FFmpeg produced an empty file.");
+    return new Blob([data], { type: outputExt === "mp4" ? "video/mp4" : "audio/wav" });
+  } finally {
+    try { await ffmpeg.deleteFile(input); } catch (_) {}
+    try { await ffmpeg.deleteFile(output); } catch (_) {}
+  }
+}
+
+async function prepareMediaFile(file, objectUrl) {
+  const sniffed = await sniffMediaType(file);
+  const declared = String(file?.type || "").toLowerCase();
+  const ext = safeExt(file.name, "");
+
+  if (sniffed === "image" || declared.startsWith("image/")) {
+    const image = await loadImageFile(file, objectUrl);
+    if (image) return { kind: "image", element: image, converted: false };
+    if (/^(heic|heif|heics|heifs)$/i.test(ext) || await looksLikeHeic(file)) {
+      const converted = await convertHeic(file);
+      return { kind: "image", element: converted.element, converted: true };
+    }
+  }
+
+  if (/^(heic|heif|heics|heifs)$/i.test(ext) || await looksLikeHeic(file)) {
+    const converted = await convertHeic(file);
+    return { kind: "image", element: converted.element, converted: true };
+  }
+
+  if (sniffed === "video" || declared.startsWith("video/")) {
+    try {
+      const v = document.createElement("video");
+      v.src = objectUrl; v.muted = true; v.playsInline = true; v.preload = "auto";
+      await waitForVideo(v, file.name);
+      return { kind: "video", element: v, converted: false };
+    } catch (_) {}
+  }
+
+  // Try native browser decoders before invoking the heavyweight WASM converter.
+  try {
+    const v = document.createElement("video");
+    v.src = objectUrl; v.muted = true; v.playsInline = true; v.preload = "metadata";
+    await waitForVideo(v, file.name, true);
+    return { kind: "video", element: v, converted: false };
+  } catch (_) {}
+
+  // Unsupported video container/codec: normalize to H.264/AAC MP4 in-browser.
+  const convertedBlob = await ffmpegConvert(file, "mp4", [
+    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"
+  ]);
+  const url = URL.createObjectURL(convertedBlob);
+  urlsForPreparedAssets.add(url);
+  const v = document.createElement("video");
+  v.src = url; v.muted = true; v.playsInline = true; v.preload = "auto";
+  await waitForVideo(v, file.name);
+  return { kind: "video", element: v, converted: true };
+}
+
+const urlsForPreparedAssets = new Set();
+
+async function prepareAudioFile(file) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return file;
+  const ctx = new AC();
+  try {
+    try {
+      await ctx.decodeAudioData(await file.arrayBuffer());
+      return file;
+    } catch (_) {}
+  } finally {
+    try { await ctx.close(); } catch (_) {}
+  }
+  const wav = await ffmpegConvert(file, "wav", ["-vn", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le"]);
+  return wav;
+}
+
+async function looksLikeHeic(file) {
+  try {
+    const head = new Uint8Array(await file.slice(0, 32).arrayBuffer());
+    if (head.length < 12) return false;
+    if (head[4] !== 0x66 || head[5] !== 0x74 || head[6] !== 0x79 || head[7] !== 0x70) return false;
+    const brand = String.fromCharCode(...head.slice(8, 12)).toLowerCase();
+    return /^(heic|heix|hevc|hevx|heif|mif1|msf1)$/.test(brand);
+  } catch (_) { return false; }
+}
+
+async function detectMediaKind(file, objectUrl) {
+  // Android gallery providers can give files names such as "jpg.1000052843"
+  // and an empty/incorrect MIME. Inspect the actual bytes first.
+  const sniffed = await sniffMediaType(file);
+  if (sniffed === "image") return "image";
+  if (sniffed === "video") return "video";
+
+  const declared = String(file?.type || "").toLowerCase();
+  if (declared.startsWith("image/")) return "image";
+  if (declared.startsWith("video/")) return "video";
+
+  // Last resort: ask the browser decoders directly.
+  try {
+    const image = new Image();
+    image.src = objectUrl;
+    await waitForImage(image, file?.name || "فایل");
+    return "image";
+  } catch (_) {}
+
+  try {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.src = objectUrl;
+    await waitForVideo(video, file?.name || "فایل", true);
+    return "video";
+  } catch (_) {}
+  return "unknown";
+}
+
+async function sniffMediaType(file) {
+  try {
+    const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+    if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image"; // JPEG
+    if (head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) return "image"; // PNG
+    if (head.length >= 6 && head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46) return "image"; // GIF
+    if (head.length >= 12 && head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46 && head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50) return "image"; // WEBP
+    if (head.length >= 12 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) {
+      const brand = String.fromCharCode(...head.slice(8, 12));
+      if (/^(avif|avis|heic|heif|heix|hevc|hevx|mif1|msf1)$/i.test(brand)) return "image";
+      if (/^(isom|iso2|mp41|mp42|3gp|3g2|M4V)$/i.test(brand)) return "video";
+    }
+    if (head.length >= 12 && head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) return "video"; // WebM/Matroska
+  } catch (_) {}
+  return null;
+}
+
+async function loadImageFile(file, objectUrl) {
+  const name = file?.name || "فایل";
+  let bytes = null;
+  try { bytes = await file.arrayBuffer(); } catch (_) {}
+
+  // Newer Android Chrome: decode from bytes with WebCodecs when available.
+  try {
+    if (bytes && "ImageDecoder" in window) {
+      const mime = await sniffImageMime(file);
+      if (mime) {
+        const decoder = new ImageDecoder({ data: bytes, type: mime });
+        const result = await decoder.decode({ frameIndex: 0 });
+        const frame = result.image;
+        const c = document.createElement("canvas");
+        c.width = frame.displayWidth || frame.codedWidth;
+        c.height = frame.displayHeight || frame.codedHeight;
+        c.getContext("2d").drawImage(frame, 0, 0);
+        frame.close?.(); decoder.close?.();
+        const img = new Image(); img.src = c.toDataURL("image/png");
+        await waitForImage(img, name); return img;
+      }
+    }
+  } catch (_) {}
+
+  try {
+    if (window.createImageBitmap) {
+      const bitmap = await createImageBitmap(file);
+      const c = document.createElement("canvas"); c.width = bitmap.width; c.height = bitmap.height;
+      c.getContext("2d").drawImage(bitmap, 0, 0); bitmap.close?.();
+      const img = new Image(); img.src = c.toDataURL("image/png");
+      await waitForImage(img, name); return img;
+    }
+  } catch (_) {}
+
+  try {
+    const mime = await sniffImageMime(file);
+    if (mime && bytes) {
+      const blob = new Blob([bytes], { type: mime });
+      const url = URL.createObjectURL(blob); const img = new Image();
+      img.decoding = "async"; img.src = url; await waitForImage(img, name);
+      URL.revokeObjectURL(url); return img;
+    }
+  } catch (_) {}
+
+  try {
+    const img = new Image(); img.decoding = "async"; img.src = objectUrl;
+    await waitForImage(img, name); return img;
+  } catch (_) {}
+
+  try {
+    const dataUrl = await fileToDataUrl(file); const img = new Image();
+    img.decoding = "async"; img.src = dataUrl; await waitForImage(img, name); return img;
+  } catch (_) {}
+
+  return null;
+}
+async function sniffImageMime(file) {
+  try {
+    const head = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+    if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
+    if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) return "image/png";
+    if (head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46) return "image/gif";
+    if (head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46 && head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50) return "image/webp";
+  } catch (_) {}
+  return null;
+}
+
+function waitForImage(img, name = "فایل") {
+  return new Promise((resolve, reject) => {
+    if (img.complete && img.naturalWidth > 0) return resolve(img);
+    const onLoad = () => { cleanup(); resolve(img); };
+    const onError = () => { cleanup(); reject(new Error(`خواندن تصویر «${name}» ناموفق بود.`)); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error(`زمان خواندن تصویر «${name}» تمام شد.`)); }, 12000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      img.removeEventListener("load", onLoad);
+      img.removeEventListener("error", onError);
+    };
+    img.addEventListener("load", onLoad, { once: true });
+    img.addEventListener("error", onError, { once: true });
+  });
+}
+
+function waitForVideo(video, name = "فایل", metadataOnly = false) {
+  return new Promise((resolve, reject) => {
+    const event = metadataOnly ? "loadedmetadata" : "canplay";
+    if ((metadataOnly && video.readyState >= 1) || (!metadataOnly && video.readyState >= 3)) return resolve(video);
+    const onReady = () => { cleanup(); resolve(video); };
+    const onError = () => { cleanup(); reject(new Error(`خواندن ویدئو «${name}» ناموفق بود.`)); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error(`زمان خواندن ویدئو «${name}» تمام شد.`)); }, 15000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      video.removeEventListener(event, onReady);
+      video.removeEventListener("error", onError);
+    };
+    video.addEventListener(event, onReady, { once: true });
+    video.addEventListener("error", onError, { once: true });
+    video.load();
+  });
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error("FileReader failed"));
+    r.readAsDataURL(file);
+  });
+}
+
+function friendlyRenderError(error) {
+  const raw = error?.message ? String(error.message) : String(error || "");
+  if (!raw || raw === "[object Event]") return "یکی از فایل‌ها قابل رمزگشایی یا تبدیل نبود. برنامه JPG/PNG/WEBP/HEIC و ویدئوهای رایج را پشتیبانی می‌کند؛ برای فرمت ناشناخته دوباره تلاش کن.";
+  if (/decodeAudioData|EncodingError|DataCloneError/i.test(raw)) return "فایل صوتی قابل خواندن نیست. موسیقی را به MP3 یا WAV تبدیل کن و دوباره امتحان کن.";
+  if (/MediaRecorder|captureStream/i.test(raw)) return "مرورگر نتوانست ویدئو را ضبط کند. آخرین نسخه Chrome را امتحان کن.";
+  return raw;
+}
+
+function hexAlpha(hex,a){const h=hex.replace("#",""); const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16); return `rgba(${r},${g},${b},${a})`;}
+function wrap(ctx,text,x,y,maxWidth,lineH,maxLines){const words=text.split(/\s+/),lines=[];let line="";for(const w of words){const test=line?`${line} ${w}`:w;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=w}else line=test}if(line)lines.push(line);lines.slice(0,maxLines).forEach((l,i)=>ctx.fillText(l,x,y+i*lineH));}
+
+assetPreview();
+renderVideoLibrary();
