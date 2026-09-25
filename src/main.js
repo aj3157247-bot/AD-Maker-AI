@@ -1011,20 +1011,40 @@ $("#scriptBtn").onclick = async () => {
     if (state.scriptMode === "manual") {
       j = { script: customScript, fallback: false, provider: "user" };
       log("سناریوی اختصاصی کاربر انتخاب شد.", "success");
-    } else try {
-      j = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords: targetWordsForDuration(state.duration), videoAnalysis: videoAnalysis ? { summary: videoAnalysis.summary || "", scenes: videoAnalysis.scenes || [], facts: videoAnalysis.facts || [], recommendedScript: videoAnalysis.script || "" } : null });
-      if (j.fallback) {
-        const reason = j.detail || j.error || "خطای نامشخص";
-        log(`API سناریو پاسخ کامل نداد؛ حالت داخلی فعال شد. علت: ${reason}`, "error");
-        if (j.error === "no_ai_provider_configured" || j.error === "openrouter_missing_api_key") {
-          log("کلید OPENROUTER_API_KEY در محیط Production این پروژه در دسترس Worker نیست. بعد از تنظیم Secret حتماً Deploy جدید انجام بده.", "error");
+    } else {
+      // If video analysis already produced a usable script, use it immediately.
+      // This avoids sending a second blocking AI request and fixes the old
+      // state where the UI could remain at 18% even though analysis was done.
+      const analyzedScript = String(videoAnalysis?.script || "").trim();
+      const targetWords = targetWordsForDuration(state.duration);
+      const analyzedWords = analyzedScript.split(/\s+/).filter(Boolean).length;
+      const usableAnalyzedScript = analyzedScript && analyzedWords >= Math.max(12, Math.round(targetWords * 0.35));
+
+      if (usableAnalyzedScript) {
+        j = { script: analyzedScript, fallback: false, provider: "groq-vision-scout" };
+        log(`سناریوی آماده‌شده از تحلیل ویدئو مستقیم استفاده شد (${analyzedWords} کلمه)؛ درخواست تکراری AI حذف شد.`, "success");
+      } else {
+        try {
+          j = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords, videoAnalysis: videoAnalysis ? { summary: videoAnalysis.summary || "", scenes: videoAnalysis.scenes || [], facts: videoAnalysis.facts || [], recommendedScript: videoAnalysis.script || "" } : null }, 30000);
+          if (j.fallback) {
+            const reason = j.detail || j.error || "خطای نامشخص";
+            log(`API سناریو پاسخ کامل نداد؛ حالت داخلی فعال شد. علت: ${reason}`, "error");
+          }
+        } catch (e) {
+          let reason = String(e?.message || e);
+          try { const parsed = JSON.parse(reason); reason = parsed.detail || parsed.error || reason; } catch (_) {}
+          // Never block the whole production pipeline on a second text-AI call.
+          // Prefer the already verified video-analysis script; otherwise use the
+          // local safe script so the pipeline can continue to voice/render.
+          if (analyzedScript) {
+            j = { script: analyzedScript, fallback: true, provider: "groq-vision-scout", error: "script_api_timeout" };
+            log(`تولید سناریوی تکمیلی پاسخ نداد؛ همان سناریوی معتبر تحلیل ویدئو استفاده شد. علت: ${reason}`, "warning");
+          } else {
+            j = { script: fallbackScript(brand, desc), fallback: true, provider: "local", error: "frontend_api_error" };
+            log(`اتصال به API سناریو ناموفق بود؛ حالت داخلی فعال شد. علت: ${reason}`, "warning");
+          }
         }
       }
-    } catch (e) {
-      let reason = String(e?.message || e);
-      try { const parsed = JSON.parse(reason); reason = parsed.detail || parsed.error || reason; } catch (_) {}
-      log(`اتصال به API سناریو ناموفق بود؛ حالت داخلی فعال شد. علت: ${reason}`, "error");
-      j = { script: fallbackScript(brand, desc), fallback: true, provider: "local", error: "frontend_api_error" };
     }
     state.script = j.script || fallbackScript(brand, desc);
     $("#scriptEditor").value = state.script; $("#scriptEditor").disabled = false; $("#editScript").disabled = false;
@@ -1055,7 +1075,17 @@ $("#scriptBtn").onclick = async () => {
 
     setStage(3); setProgress(55, "صحنه‌ها", "رسانه‌ها، متن و رنگ برند برای ویدئو چیده می‌شوند..."); log("مرحله صحنه‌ها شروع شد."); await wait(350); setStage(3, "done");
     setProgress(62, "صحنه‌ها آماده", "سناریو، گویندگی و صحنه‌بندی کامل شد؛ آماده رندر نهایی.");
-    $("#renderBtn").disabled = false; state.generated = true; $("#overallState").textContent = "● آماده رندر با صدا"; log("پروژه برای رندر نهایی آماده است.", "success");
+    // This is the only gate for the final button: a real script + real audio.
+    // Always explicitly unlock it here, even if an earlier analysis stage updated
+    // the UI after the button state was changed.
+    if (state.script && state.voiceBlob?.size) {
+      $("#renderBtn").disabled = false;
+      state.generated = true;
+      $("#overallState").textContent = "● آماده رندر با صدا";
+      log("پروژه برای رندر نهایی آماده است؛ دکمه «ساخت ویدئو» فعال شد.", "success");
+    } else {
+      throw new Error("سناریو یا فایل گویندگی برای رندر نهایی آماده نیست.");
+    }
   } finally { state.busy = false; $("#scriptBtn").disabled = false; }
 };
 
