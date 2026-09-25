@@ -1084,7 +1084,9 @@ $("#scriptBtn").onclick = async () => {
       const analyzedScript = String(videoAnalysis?.script || "").trim();
       const targetWords = targetWordsForDuration(state.duration);
       const analyzedWords = analyzedScript.split(/\s+/).filter(Boolean).length;
-      const usableAnalyzedScript = analyzedScript && analyzedWords >= Math.max(12, Math.round(targetWords * 0.35));
+      // Any non-empty script from a successful video-analysis AI is a valid hand-off.
+      // Never block voice/render just because the script is shorter than the ideal word target.
+      const usableAnalyzedScript = Boolean(analyzedScript);
 
       // A verified video-analysis script is a valid hand-off. Never force the
       // production pipeline to wait for another text-AI request just because
@@ -1094,20 +1096,14 @@ $("#scriptBtn").onclick = async () => {
         j = { script: analyzedScript, fallback: false, provider: videoAnalysis?.providers?.[0] || "video-analysis" };
         log(`سناریوی معتبر از زمینه مشترک AIها مستقیم تحویل شد (${analyzedWords} کلمه)؛ مرحله دوم AI سد راه تولید نیست.`, "success");
 
-        // Optional enrichment runs only when the script is clearly too short.
-        // It has a hard 8-second budget and can never block the main pipeline.
+        // Optional enrichment is a true background helper. It gets at most 1.5s
+        // and can never become a gate for the production pipeline.
         if (analyzedWords < Math.max(20, Math.round(targetWords * 0.55))) {
-          try {
-            const enriched = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords, videoAnalysis: { summary: videoAnalysis?.summary || "", scenes: videoAnalysis?.scenes || [], facts: videoAnalysis?.facts || [], recommendedScript: analyzedScript, coordinated: Boolean(videoAnalysis?.coordinated), providers: Array.isArray(videoAnalysis?.providers) ? videoAnalysis.providers : [], providerModels: Array.isArray(videoAnalysis?.providerModels) ? videoAnalysis.providerModels : [] } }, 8000);
-            if (enriched?.script && String(enriched.script).trim().split(/\s+/).filter(Boolean).length >= analyzedWords) {
-              j = enriched;
-              log("سناریوی تکمیلی در زمان مجاز آماده شد و نتیجه مشترک AIها را غنی‌تر کرد.", "success");
-            } else {
-              log("سناریوی اولیه معتبر بود؛ تولید بدون انتظار برای AI تکمیلی ادامه یافت.", "info");
-            }
-          } catch (e) {
-            log("AI تکمیلی سریع آماده نشد؛ سناریوی تأییدشده حفظ شد و تولید ادامه یافت.", "info");
-          }
+          const enrichmentBody = { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords, videoAnalysis: { summary: videoAnalysis?.summary || "", scenes: videoAnalysis?.scenes || [], facts: videoAnalysis?.facts || [], recommendedScript: analyzedScript, coordinated: Boolean(videoAnalysis?.coordinated), providers: Array.isArray(videoAnalysis?.providers) ? videoAnalysis.providers : [], providerModels: Array.isArray(videoAnalysis?.providerModels) ? videoAnalysis.providerModels : [] } };
+          api("/api/generate-script", enrichmentBody, 1500).then(enriched => {
+            if (enriched?.script) log("AI تکمیلی در پس‌زمینه پاسخ داد؛ سناریوی اصلی قبلاً وارد گویندگی شده بود.", "info");
+          }).catch(() => {});
+          log("سناریوی تصویری معتبر است؛ گویندگی بدون انتظار برای AI تکمیلی شروع می‌شود.", "info");
         }
       } else {
         // No usable visual script: use the normal text-AI path, but keep the
@@ -1129,7 +1125,7 @@ $("#scriptBtn").onclick = async () => {
     log(`${actualWords} کلمه برای ویدئوی ${Math.round(state.duration / 60) >= 1 ? `${Math.round(state.duration / 60)} دقیقه` : `${state.duration} ثانیه`} آماده شد؛ هدف تقریبی ${expectedWords} کلمه است.`, actualWords >= Math.round(expectedWords * 0.72) ? "success" : "info");
     log(state.scriptMode === "manual" ? "سناریوی اختصاصی آماده شد." : state.scriptMode === "hybrid" ? "سناریو با همکاری کاربر و AI آماده شد." : (j.fallback ? t("fallback") : "سناریوی هوشمند با موفقیت دریافت شد."), j.fallback ? "info" : "success");
     setStage(1, "done");
-    setProgress(40, "سناریو آماده", "سناریو کامل شد؛ مرحله گویندگی شروع می‌شود.");
+    setProgress(40, "سناریو آماده", "سناریو تأیید شد؛ بدون انتظار برای AI دیگر وارد گویندگی می‌شویم.");
     log("مرحله سناریو با موفقیت کامل شد و تیک خورد.", "success");
 
     setStage(2);
