@@ -478,7 +478,7 @@ async function analyzeUploadedVideo() {
       el.load();
       await waitEvent("loadedmetadata", 20000);
       const duration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 60;
-      const count = Math.max(8, Math.min(maxFrames, Math.ceil(duration / 20)));
+      const count = Math.max(3, Math.min(maxFrames, Math.ceil(duration / 20)));
       const canvas = document.createElement("canvas");
       const sourceW = el.videoWidth || 1280;
       const sourceH = el.videoHeight || 720;
@@ -514,8 +514,8 @@ async function analyzeUploadedVideo() {
     if (parallelScoutPromise) return parallelScoutPromise;
     parallelScoutStarted = true;
     parallelScoutPromise = (async () => {
-      const captured = await captureFallbackFrames(video, 6);
-      setProgress(66, "همکاری موازی AI", `Gemini تحلیل کامل را انجام می‌دهد؛ OpenRouter و Groq همزمان ${captured.frames.length} فریم کلیدی را بررسی می‌کنند…`);
+      const captured = await captureFallbackFrames(video, 4);
+      setProgress(66, "همکاری موازی AI", `Gemini، Groq و OpenRouter همزمان کار می‌کنند؛ ${captured.frames.length} فریم سریع برای تحلیل تصویری آماده شد…`);
       log("همکاری موازی فعال شد: Gemini + OpenRouter + Groq همزمان کار می‌کنند.", "info");
       const baseBody = {
         frames: captured.frames,
@@ -729,16 +729,16 @@ async function analyzeUploadedVideo() {
         if (["failed", "cancelled", "incomplete", "budget_exceeded"].includes(st)) {
           throw new Error(status?.detail || `تحلیل Gemini با وضعیت ${st} پایان یافت.`);
         }
-        if (looksCapacityBusy || elapsedMs >= 45_000) {
+        if (looksCapacityBusy || elapsedMs >= 18_000) {
           throw new Error(looksCapacityBusy
             ? "Gemini فعلاً ظرفیت کافی ندارد؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود."
             : "Gemini هنوز در حال پردازش است؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود.");
         }
-        const percent = Math.min(74, 68 + Math.round((elapsedMs / 45_000) * 6));
+        const percent = Math.min(74, 68 + Math.round((elapsedMs / 18_000) * 6));
         setProgress(percent, "تحلیل موازی محتوا", `Gemini + Groq + OpenRouter همزمان در حال تحلیل هستند… (${st === "queued" ? "در صف Gemini" : "پردازش Gemini"})`);
         if (poll === 1 || poll % 8 === 0) log(`تحلیل موازی هنوز در حال انجام است؛ Gemini ${st === "queued" ? "در صف" : "در حال پردازش"}.`, "info");
       }
-      throw new Error("Gemini در زمان تعیین‌شده نتیجه نداد؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود.");
+      throw new Error("Gemini در زمان کوتاه نتیجه نداد؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود.");
     };
 
     const runGeminiLane = async () => {
@@ -799,7 +799,7 @@ async function analyzeUploadedVideo() {
 
     // Never wait for a slow provider. Give already-finished specialists a very
     // short window to enrich the fastest result before scripting/voice starts.
-    const extraInsights = await collectParallelInsights(1200);
+    const extraInsights = await collectParallelInsights(700);
     const coordinatedResult = mergeAiAnalyses(resultPayload, extraInsights);
     if (coordinatedResult?.coordinated) {
       log(`هماهنگی AI کامل شد: ${coordinatedResult.providers.length} موتور در زمینه مشترک استفاده شدند (${coordinatedResult.providers.join(" + ")}).`, "success");
@@ -1015,6 +1015,29 @@ $("#scriptBtn").onclick = async () => {
 
     let videoAnalysis = state.videoAnalysis;
     const shouldAnalyzeVideo = state.buildMode === "pro" || state.buildMode === "video";
+    // FAST TEAM START: while Gemini/Groq/OpenRouter analyze the video, the text
+    // specialists immediately start building a provisional script from the
+    // verified user input. This removes idle time between analysis and scripting.
+    let earlyScriptPoolPromise = null;
+    if (state.scriptMode !== "manual") {
+      const earlyTargetWords = targetWordsForDuration(state.duration);
+      earlyScriptPoolPromise = api("/api/ai/work-pool", {
+        brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "",
+        scriptMode: state.scriptMode, language: state.language, duration: state.duration,
+        targetWords: earlyTargetWords, phase: "script",
+        analysis: { summary: "", facts: [], scenes: [], script: "" }
+      }, 15000).then(pool => {
+        if (pool?.script) {
+          log(`⚡ مسیر سناریوی سریع آماده شد؛ ${Array.isArray(pool.providers) ? pool.providers.length : 1} AI همزمان روی متن اولیه کار کردند.`, "success");
+          return pool;
+        }
+        return null;
+      }).catch(err => {
+        log(`مسیر سناریوی موازی هنوز آماده نیست؛ تحلیل ویدئو بدون توقف ادامه دارد. ${String(err?.message || err)}`, "info");
+        return null;
+      });
+    }
+
     if (shouldAnalyzeVideo && state.assets.some(isVideoFile) && state.scriptMode !== "manual" && !videoAnalysis) {
       try { videoAnalysis = await analyzeUploadedVideo(); }
       catch (_) { log("تحلیل ویدئو در دسترس نبود؛ سناریو با اطلاعات متنی ادامه پیدا می‌کند.", "info"); }
@@ -1040,8 +1063,8 @@ $("#scriptBtn").onclick = async () => {
       // The first usable script unlocks the production lane; slower specialists
       // keep working and their results are retained for the next stage.
       try {
-        log("🚀 اتاق کار AI فعال شد: Gemini + Groq + OpenRouter + Cloudflare AI همزمان روی سناریو کار می‌کنند.", "info");
-        const pool = await api("/api/ai/work-pool", {
+        log("🚀 اتاق کار AI فعال است؛ سناریو و تحلیل ویدئو همزمان جلو می‌روند.", "info");
+        const contextualPoolPromise = api("/api/ai/work-pool", {
           brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "",
           scriptMode: state.scriptMode, language: state.language, duration: state.duration,
           targetWords, phase: "script",
@@ -1051,14 +1074,21 @@ $("#scriptBtn").onclick = async () => {
             scenes: Array.isArray(currentAnalysis.scenes) ? currentAnalysis.scenes : [],
             script: currentAnalysis.script || ""
           }
-        }, 12000);
+        }, 15000).catch(() => null);
+        // Prefer the video-aware pool if it is already fast; otherwise use the
+        // already-running provisional pool so no AI time is wasted.
+        const pool = await Promise.race([
+          contextualPoolPromise,
+          earlyScriptPoolPromise || Promise.resolve(null),
+          wait(4500).then(() => null)
+        ]);
         if (pool?.script) {
           j = { script: String(pool.script).trim(), fallback: false, provider: pool.provider || "ai-work-pool" };
-          log(`⚡ سناریو آماده شد؛ ${Array.isArray(pool.providers) ? pool.providers.length : 1} موتور AI همزمان روی آن کار کردند.`, "success");
+          log(`⚡ سناریو آزاد شد؛ ${Array.isArray(pool.providers) ? pool.providers.length : 1} موتور AI در مسیر تولید قرار گرفتند.`, "success");
           if (Array.isArray(pool.providers) && pool.providers.length) log(`همکاران سناریو: ${pool.providers.join(" + ")}.`, "info");
         }
       } catch (poolError) {
-        log(`اتاق کار AI پاسخ کامل نداد؛ از سناریوی تحلیل ویدئو/مسیر پشتیبان استفاده می‌شود. ${String(poolError?.message || poolError)}`, "warning");
+        log(`اتاق کار AI هنوز در حال کار است؛ مسیر آماده تحلیل/سناریو ادامه پیدا می‌کند. ${String(poolError?.message || poolError)}`, "info");
       }
 
       if (!j) {
