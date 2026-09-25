@@ -19,7 +19,9 @@ const state = {
   generated: false,
   voiceMode: "none",
   videoAnalysis: null,
-  videoAnalysisBusy: false
+  videoAnalysisBusy: false,
+  conveyorReleased: false,
+  backgroundVideoAnalysisPromise: null
 };
 
 const $ = (s) => document.querySelector(s);
@@ -425,8 +427,9 @@ async function analyzeUploadedVideo() {
   if (!video || state.videoAnalysisBusy) return null;
   state.videoAnalysisBusy = true;
   updateVideoAnalysisUI();
+  const analysisProgress = (...args) => { if (!state.conveyorReleased) setProgress(...args); };
   setStage(0);
-  setProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود؛ در صورت خطای سرویس، OpenRouter Free خودکار فعال می‌شود…");
+  analysisProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود؛ در صورت خطای سرویس، OpenRouter Free خودکار فعال می‌شود…");
   log("تحلیل هوشمند ویدئوی معرفی شروع شد.", "info");
 
   const requestJson = async (url, options = {}, timeoutMs = 45000) => {
@@ -584,7 +587,7 @@ async function analyzeUploadedVideo() {
     parallelScoutStarted = true;
     parallelScoutPromise = (async () => {
       const captured = await captureFastScoutFrames(video, 3);
-      setProgress(66, "همکاری موازی AI", `Gemini، Groq و OpenRouter همزمان کار می‌کنند؛ ${captured.frames.length} فریم سریع برای تحلیل تصویری آماده شد…`);
+      analysisProgress(66, "همکاری موازی AI", `Gemini، Groq و OpenRouter همزمان کار می‌کنند؛ ${captured.frames.length} فریم سریع برای تحلیل تصویری آماده شد…`);
       log("همکاری موازی فعال شد: Gemini + OpenRouter + Groq همزمان کار می‌کنند.", "info");
       const baseBody = {
         frames: captured.frames,
@@ -693,20 +696,20 @@ async function analyzeUploadedVideo() {
     let fileName = "";
     let geminiPreparationFailed = false;
     if (size <= 20 * 1024 * 1024) {
-      setProgress(18, "آماده‌سازی ویدئو", "ویدئوی کوتاه برای Gemini آماده می‌شود…");
+      analysisProgress(18, "آماده‌سازی ویدئو", "ویدئوی کوتاه برای Gemini آماده می‌شود…");
       log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ مسیر مستقیم Interactions فعال شد تا خطای blob:// ایجاد نشود.`, "info");
     } else if (size <= 95 * 1024 * 1024) {
-      setProgress(15, "ارسال ویدئو", "ویدئو به Files API Gemini ارسال می‌شود…");
+      analysisProgress(15, "ارسال ویدئو", "ویدئو به Files API Gemini ارسال می‌شود…");
       log(`ویدئو ${(size / 1024 / 1024).toFixed(1)}MB است؛ مسیر Files API فعال شد.`);
       const form = new FormData();
       form.append("video", video, video.name || "site-demo.mp4");
-      setProgress(22, "ارسال ویدئو", "در حال ارسال فایل به Gemini…");
+      analysisProgress(22, "ارسال ویدئو", "در حال ارسال فایل به Gemini…");
       try {
         fileInfo = await requestJson(`${window.location.origin}/api/analyze-video/upload`, {
           method: "POST",
           body: form
         }, 180000);
-        setProgress(50, "ارسال ویدئو", "آپلود ویدئو به Gemini کامل شد.");
+        analysisProgress(50, "ارسال ویدئو", "آپلود ویدئو به Gemini کامل شد.");
         log("مرحله ۱: ویدئو کامل به Gemini ارسال و ثبت شد.", "success");
         fileName = fileInfo?.fileName || "";
         if (!fileName) throw new Error("Gemini فایل نهایی را ثبت نکرد.");
@@ -727,7 +730,7 @@ async function analyzeUploadedVideo() {
         if (fileState === "FAILED") throw new Error(fileInfoCurrent?.detail || "Gemini نتوانست فایل ویدئو را پردازش کند.");
         polls += 1;
         const percent = Math.min(58, 50 + Math.min(8, polls));
-        setProgress(percent, "پردازش ویدئو", `Gemini در حال آماده‌سازی ویدئو است… وضعیت: ${fileState}`);
+        analysisProgress(percent, "پردازش ویدئو", `Gemini در حال آماده‌سازی ویدئو است… وضعیت: ${fileState}`);
         if (polls === 1) log("آپلود کامل شد؛ Gemini در حال پردازش ویدئو است.", "success");
         await wait(3500);
         fileInfoCurrent = await requestJson(`${window.location.origin}/api/analyze-video/file-status?name=${encodeURIComponent(fileName)}`, {}, 45000);
@@ -735,7 +738,7 @@ async function analyzeUploadedVideo() {
         if (polls > 90) throw new Error("پردازش فایل در Gemini بیش از حد طول کشید. ویدئوی کوتاه‌تر یا کم‌حجم‌تر امتحان کن.");
       }
 
-      setProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
+      analysisProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
       log("مرحله ۲: فایل آماده شد؛ تحلیل پس‌زمینه شروع می‌شود.", "success");
       formStart = {
         fileName: fileInfoCurrent.fileName || fileName,
@@ -748,11 +751,11 @@ async function analyzeUploadedVideo() {
         platform: platformLabel(state.platform)
       };
     } else {
-      setProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده است؛ تحلیل مستقیم Gemini شروع می‌شود…");
+      analysisProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده است؛ تحلیل مستقیم Gemini شروع می‌شود…");
       log("مرحله ۲: مسیر مستقیم ویدئو آماده شد؛ بدون URI فایل Gemini تحلیل شروع می‌شود.", "success");
     }
 
-    setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی سریع و واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
+    analysisProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی سریع و واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
     log("مرحله ۳: تحلیل واقعی ویدئو با Gemini Interactions و اجرای پس‌زمینه شروع شد.");
     const failedModels = new Set();
     const maxFallbacks = geminiPreparationFailed ? 0 : 2;
@@ -783,7 +786,7 @@ async function analyzeUploadedVideo() {
     // Slower Gemini polling must never write 68/74% back over the next stage.
     let pipelineReleased = false;
     const analysisSetProgress = (...args) => {
-      if (!pipelineReleased) setProgress(...args);
+      if (!pipelineReleased) analysisProgress(...args);
     };
 
     // TRUE PARALLEL VIDEO ANALYSIS: Gemini, Groq and OpenRouter all enter
@@ -892,7 +895,7 @@ async function analyzeUploadedVideo() {
     if (coordinatedResult?.coordinated) {
       log(`هماهنگی AI کامل شد: ${coordinatedResult.providers.length} موتور در زمینه مشترک استفاده شدند (${coordinatedResult.providers.join(" + ")}).`, "success");
     }
-    setProgress(92, "هماهنگی AI", "نتایج AIها در یک زمینه مشترک جمع شد؛ سناریو از اطلاعات تأییدشده ساخته می‌شود…");
+    analysisProgress(92, "هماهنگی AI", "نتایج AIها در یک زمینه مشترک جمع شد؛ سناریو از اطلاعات تأییدشده ساخته می‌شود…");
     const result = coordinatedResult || resultPayload.analysis;
     try { Object.defineProperty(result, "_lateEnrichmentPromise", { value: lateEnrichmentPromise, enumerable: false, configurable: true }); } catch (_) {}
 
@@ -918,7 +921,7 @@ async function analyzeUploadedVideo() {
     // Never leave the global pipeline parked at the old analysis value (18%).
     // 18% is only an internal analysis milestone; once the analysis result is
     // actually available, the production pipeline is already in the script lane.
-    setProgress(22, "سناریو", "تحلیل ویدئو کامل شد؛ سناریو وارد مرحله تولید شد.");
+    analysisProgress(22, "سناریو", "تحلیل ویدئو کامل شد؛ سناریو وارد مرحله تولید شد.");
     return result;
   } catch (e) {
     const detail = String(e?.message || e);
@@ -927,7 +930,7 @@ async function analyzeUploadedVideo() {
     // Never leave the pipeline visually stuck on the active information stage.
     // A quota/provider failure is a terminal state for this attempt.
     setStage(0, "error");
-    setProgress(68, "تحلیل متوقف شد", detail.includes("سهمیه روزانه") || detail.includes("daily quota")
+    analysisProgress(68, "تحلیل متوقف شد", detail.includes("سهمیه روزانه") || detail.includes("daily quota")
       ? "سهمیه روزانه Gemini تمام شده است؛ بعد از بازنشانی سهمیه دوباره تلاش کن."
       : detail);
     log(`تحلیل ویدئو انجام نشد: ${detail}`, "error");
@@ -1128,8 +1131,30 @@ $("#scriptBtn").onclick = async () => {
     }
 
     if (shouldAnalyzeVideo && state.assets.some(isVideoFile) && state.scriptMode !== "manual" && !videoAnalysis) {
-      try { videoAnalysis = await analyzeUploadedVideo(); }
-      catch (_) { log("تحلیل ویدئو در دسترس نبود؛ سناریو با اطلاعات متنی ادامه پیدا می‌کند.", "info"); }
+      // TRUE CONVEYOR: video understanding is allowed only a short hand-off
+      // window. If visual AI is slower, scripting/TTS/rendering continue while
+      // Gemini/Groq/OpenRouter finish in the background.
+      const analysisPromise = analyzeUploadedVideo();
+      state.backgroundVideoAnalysisPromise = analysisPromise;
+      videoAnalysis = await Promise.race([
+        analysisPromise,
+        wait(4500).then(() => null)
+      ]);
+      if (videoAnalysis) {
+        state.conveyorReleased = true;
+      } else {
+        state.conveyorReleased = true;
+        videoAnalysis = state.videoAnalysis || { summary: "", facts: [], scenes: [], script: "", providers: [] };
+        log("⚡ خط تولید بدون انتظار برای تحلیل تصویری ادامه یافت؛ Gemini، Groq و OpenRouter هنوز در پس‌زمینه مشغول‌اند و نتیجه‌شان بعداً وارد برنامه تولید می‌شود.", "success");
+        analysisPromise.then(late => {
+          if (late?.summary || late?.script || late?.scenes?.length || late?.facts?.length) {
+            state.videoAnalysis = late;
+            updateVideoAnalysisUI();
+            log("🤝 تحلیل تصویری دیررس رسید و برای غنی‌سازی صحنه‌ها و کنترل کیفیت ذخیره شد.", "success");
+          }
+          return late;
+        }).catch(err => log(`تحلیل تصویری پس‌زمینه پایان یافت: ${String(err?.message || err)}`, "info"));
+      }
     }
     if (state.buildMode === "video" && !state.assets.some(isVideoFile)) {
       log("حالت تحلیل ویدئو انتخاب شده اما ویدئویی اضافه نشده است؛ سناریو با اطلاعات متنی ادامه پیدا می‌کند.", "info");
@@ -1138,6 +1163,7 @@ $("#scriptBtn").onclick = async () => {
       log("حالت ساخت سریع فعال است؛ تحلیل عمیق ویدئو برای کاهش زمان انتظار رد شد.", "info");
     }
     // Stage 01 is now genuinely complete before stage 02 becomes active.
+    state.conveyorReleased = true;
     setStage(0, "done");
     setStage(1); setProgress(22, "سناریو", state.scriptMode === "manual" ? "سناریوی اختصاصی تو آماده می‌شود." : state.scriptMode === "hybrid" ? "AI سناریوی تو را حرفه‌ای‌تر و منسجم‌تر می‌کند." : t("script"));
     let j;
@@ -1152,15 +1178,14 @@ $("#scriptBtn").onclick = async () => {
       // deliberately bounded so Gemini/OpenRouter/Groq can continue working
       // without blocking the whole production pipeline.
       if (currentAnalysis?._lateEnrichmentPromise) {
-        try {
-          const enriched = await Promise.race([currentAnalysis._lateEnrichmentPromise, wait(2200).then(() => null)]);
+        currentAnalysis._lateEnrichmentPromise.then(enriched => {
           if (enriched?.summary || enriched?.facts?.length || enriched?.scenes?.length) {
-            videoAnalysis = enriched;
             state.videoAnalysis = enriched;
             updateVideoAnalysisUI();
-            log(`🤝 نتیجه دیررس AIها قبل از سناریو ادغام شد؛ ${Array.isArray(enriched.providers) ? enriched.providers.length : 1} موتور در زمینه مشترک هستند.`, "success");
+            log(`🤝 نتیجه دیررس AIها بدون توقف خط تولید ادغام شد؛ ${Array.isArray(enriched.providers) ? enriched.providers.length : 1} موتور در زمینه مشترک هستند.`, "success");
           }
-        } catch (_) {}
+          return enriched;
+        }).catch(() => {});
       }
       // AI CONVEYOR: the script lane is NEVER allowed to become a hard gate.
       // All text specialists receive the same verified context, but the browser
