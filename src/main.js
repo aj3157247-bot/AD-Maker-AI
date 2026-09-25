@@ -779,6 +779,13 @@ async function analyzeUploadedVideo() {
     let completed = false;
     let lastFailure = null;
 
+    // Once any valid AI result wins, the production conveyor owns the UI.
+    // Slower Gemini polling must never write 68/74% back over the next stage.
+    let pipelineReleased = false;
+    const analysisSetProgress = (...args) => {
+      if (!pipelineReleased) setProgress(...args);
+    };
+
     // TRUE PARALLEL VIDEO ANALYSIS: Gemini, Groq and OpenRouter all enter
     // the same race. The first valid analysis unlocks the next stage.
     const pollGemini = async (started, activeModel = "") => {
@@ -804,7 +811,7 @@ async function analyzeUploadedVideo() {
             : "Gemini هنوز در حال پردازش است؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود.");
         }
         const percent = Math.min(74, 68 + Math.round((elapsedMs / 7_000) * 6));
-        if (!parallelScoutResults.length) setProgress(percent, "تحلیل موازی محتوا", `Gemini + Groq + OpenRouter همزمان در حال تحلیل هستند… (${st === "queued" ? "در صف Gemini" : "پردازش Gemini"})`); else setProgress(Math.max(74, percent), "همکاری AI", `نتیجه سریع AI آماده شده؛ Gemini و سایر AIها در پس‌زمینه ادامه می‌دهند…`);
+        if (!parallelScoutResults.length) analysisSetProgress(percent, "تحلیل موازی محتوا", `Gemini + Groq + OpenRouter همزمان در حال تحلیل هستند… (${st === "queued" ? "در صف Gemini" : "پردازش Gemini"})`); else analysisSetProgress(Math.max(74, percent), "همکاری AI", `نتیجه سریع AI آماده شده؛ Gemini و سایر AIها در پس‌زمینه ادامه می‌دهند…`);
         if (poll === 1 || poll % 8 === 0) log(`تحلیل موازی هنوز در حال انجام است؛ Gemini ${st === "queued" ? "در صف" : "در حال پردازش"}.`, "info");
       }
       throw new Error("Gemini در زمان کوتاه نتیجه نداد؛ نتیجه سریع‌تر AIهای موازی استفاده می‌شود.");
@@ -816,7 +823,7 @@ async function analyzeUploadedVideo() {
       if (!attempts) throw new Error("Gemini مسیر آماده نیست؛ تحلیل موازی ادامه پیدا می‌کند.");
       for (let attempt = 1; attempt <= attempts; attempt += 1) {
         try {
-          setProgress(68, "تحلیل موازی محتوا", attempt === 1
+          analysisSetProgress(68, "تحلیل موازی محتوا", attempt === 1
             ? "Gemini + Groq + OpenRouter همزمان در حال تحلیل ویدئو هستند…"
             : `Gemini مدل جایگزین ${attempt - 1} را همزمان امتحان می‌کند…`);
           if (attempt > 1) log(`تلاش جایگزین Gemini ${attempt - 1} همزمان با AIهای دیگر شروع شد.`, "info");
@@ -847,6 +854,8 @@ async function analyzeUploadedVideo() {
       resultPayload = await Promise.any([geminiLane, scoutLane]);
       completed = Boolean(resultPayload?.analysis);
       if (completed) {
+        pipelineReleased = true;
+
         log(`⚡ اولین تحلیل معتبر آماده شد: ${resultPayload.provider || resultPayload.model || "Gemini"}. ادامه تولید بدون انتظار برای AI کندتر انجام می‌شود.`, "success");
       }
     } catch (raceError) {
@@ -856,6 +865,7 @@ async function analyzeUploadedVideo() {
         if (retryPayload?.status === "completed" && retryPayload?.analysis) {
           resultPayload = retryPayload;
           completed = true;
+          pipelineReleased = true;
         }
       } catch (fallbackError) {
         throw new Error(`${String(lastFailure?.message || "تحلیل موازی ناموفق بود.")} | Groq/OpenRouter: ${String(fallbackError?.message || fallbackError)}`);
@@ -868,6 +878,8 @@ async function analyzeUploadedVideo() {
 
     // Never wait for a slow provider. Give already-finished specialists a very
     // short window to enrich the fastest result before scripting/voice starts.
+    // Keep late specialists alive, but they are no longer allowed to control the main progress bar.
+    pipelineReleased = true;
     const extraInsights = await collectParallelInsights(900);
     const coordinatedResult = mergeAiAnalyses(resultPayload, extraInsights);
     // Keep the slower specialists alive after the first winner. Their late
