@@ -871,7 +871,10 @@ async function analyzeUploadedVideo() {
     // a misleading 42% with stage 01 still active.
     setStage(0, "done");
     setStage(1, "active");
-    setProgress(18, "سناریو", "تحلیل ویدئو کامل شد؛ حالا سناریو آماده است.");
+    // Never leave the global pipeline parked at the old analysis value (18%).
+    // 18% is only an internal analysis milestone; once the analysis result is
+    // actually available, the production pipeline is already in the script lane.
+    setProgress(22, "سناریو", "تحلیل ویدئو کامل شد؛ سناریو وارد مرحله تولید شد.");
     return result;
   } catch (e) {
     const detail = String(e?.message || e);
@@ -1083,30 +1086,38 @@ $("#scriptBtn").onclick = async () => {
       const analyzedWords = analyzedScript.split(/\s+/).filter(Boolean).length;
       const usableAnalyzedScript = analyzedScript && analyzedWords >= Math.max(12, Math.round(targetWords * 0.35));
 
-      const coordinatedVideo = videoAnalysis?.coordinated && Array.isArray(videoAnalysis?.providers) && videoAnalysis.providers.length > 1;
-      if (usableAnalyzedScript && !coordinatedVideo) {
+      // A verified video-analysis script is a valid hand-off. Never force the
+      // production pipeline to wait for another text-AI request just because
+      // several visual AIs contributed. The other specialists have already
+      // enriched videoAnalysis; voice/render can start immediately.
+      if (usableAnalyzedScript) {
         j = { script: analyzedScript, fallback: false, provider: videoAnalysis?.providers?.[0] || "video-analysis" };
-        log(`سناریوی معتبر تحلیل ویدئو مستقیم استفاده شد (${analyzedWords} کلمه)؛ درخواست تکراری AI حذف شد.`, "success");
+        log(`سناریوی معتبر از زمینه مشترک AIها مستقیم تحویل شد (${analyzedWords} کلمه)؛ مرحله دوم AI سد راه تولید نیست.`, "success");
+
+        // Optional enrichment runs only when the script is clearly too short.
+        // It has a hard 8-second budget and can never block the main pipeline.
+        if (analyzedWords < Math.max(20, Math.round(targetWords * 0.55))) {
+          try {
+            const enriched = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords, videoAnalysis: { summary: videoAnalysis?.summary || "", scenes: videoAnalysis?.scenes || [], facts: videoAnalysis?.facts || [], recommendedScript: analyzedScript, coordinated: Boolean(videoAnalysis?.coordinated), providers: Array.isArray(videoAnalysis?.providers) ? videoAnalysis.providers : [], providerModels: Array.isArray(videoAnalysis?.providerModels) ? videoAnalysis.providerModels : [] } }, 8000);
+            if (enriched?.script && String(enriched.script).trim().split(/\s+/).filter(Boolean).length >= analyzedWords) {
+              j = enriched;
+              log("سناریوی تکمیلی در زمان مجاز آماده شد و نتیجه مشترک AIها را غنی‌تر کرد.", "success");
+            } else {
+              log("سناریوی اولیه معتبر بود؛ تولید بدون انتظار برای AI تکمیلی ادامه یافت.", "info");
+            }
+          } catch (e) {
+            log("AI تکمیلی سریع آماده نشد؛ سناریوی تأییدشده حفظ شد و تولید ادامه یافت.", "info");
+          }
+        }
       } else {
+        // No usable visual script: use the normal text-AI path, but keep the
+        // timeout short so a provider outage cannot freeze the whole pipeline.
         try {
-          j = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords, videoAnalysis: videoAnalysis ? { summary: videoAnalysis.summary || "", scenes: videoAnalysis.scenes || [], facts: videoAnalysis.facts || [], recommendedScript: videoAnalysis.script || "", coordinated: Boolean(videoAnalysis.coordinated), providers: Array.isArray(videoAnalysis.providers) ? videoAnalysis.providers : [], providerModels: Array.isArray(videoAnalysis.providerModels) ? videoAnalysis.providerModels : [] } : null }, 30000);
-          if (j.fallback) {
-            const reason = j.detail || j.error || "خطای نامشخص";
-            log(`API سناریو پاسخ کامل نداد؛ حالت داخلی فعال شد. علت: ${reason}`, "error");
-          }
+          j = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords, videoAnalysis: videoAnalysis ? { summary: videoAnalysis.summary || "", scenes: videoAnalysis.scenes || [], facts: videoAnalysis.facts || [], recommendedScript: videoAnalysis.script || "", coordinated: Boolean(videoAnalysis.coordinated), providers: Array.isArray(videoAnalysis.providers) ? videoAnalysis.providers : [], providerModels: Array.isArray(videoAnalysis.providerModels) ? videoAnalysis.providerModels : [] } : null }, 8000);
+          if (j.fallback) log(`API سناریو پاسخ کامل نداد؛ حالت داخلی فعال شد. علت: ${j.detail || j.error || "خطای نامشخص"}`, "warning");
         } catch (e) {
-          let reason = String(e?.message || e);
-          try { const parsed = JSON.parse(reason); reason = parsed.detail || parsed.error || reason; } catch (_) {}
-          // Never block the whole production pipeline on a second text-AI call.
-          // Prefer the already verified video-analysis script; otherwise use the
-          // local safe script so the pipeline can continue to voice/render.
-          if (analyzedScript) {
-            j = { script: analyzedScript, fallback: true, provider: "groq-vision-scout", error: "script_api_timeout" };
-            log(`تولید سناریوی تکمیلی پاسخ نداد؛ همان سناریوی معتبر تحلیل ویدئو استفاده شد. علت: ${reason}`, "warning");
-          } else {
-            j = { script: fallbackScript(brand, desc), fallback: true, provider: "local", error: "frontend_api_error" };
-            log(`اتصال به API سناریو ناموفق بود؛ حالت داخلی فعال شد. علت: ${reason}`, "warning");
-          }
+          j = { script: fallbackScript(brand, desc), fallback: true, provider: "local", error: "frontend_api_error" };
+          log("AI سناریو در زمان مجاز پاسخ نداد؛ سناریوی داخلی برای ادامه تولید استفاده شد.", "warning");
         }
       }
     }
