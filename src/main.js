@@ -423,6 +423,40 @@ function updateVideoAnalysisUI() {
 }
 
 async function analyzeUploadedVideo(options = {}) {
+  // The manual "تحلیل ویدئو" button must not keep the UI hostage to the slow
+  // Gemini/File-API lane. The full analysis continues in the background; the
+  // caller receives the first useful result (or a non-blocking handoff) quickly.
+  if (state.videoAnalysisBusy) return state.videoAnalysis || null;
+  const corePromise = runVideoAnalysisCore(options);
+  if (!options?.fastReturn) return corePromise;
+  const scoutPromise = state.videoScoutPromise;
+  const scoutResultPromise = scoutPromise
+    ? scoutPromise.then(result => {
+        if (result?.analysis) {
+          state.videoAnalysis = result.analysis;
+          updateVideoAnalysisUI();
+          log(`⚡ اولین تحلیل تصویری سریع از ${result.provider || "AI"} آماده شد؛ Gemini بدون توقف در پس‌زمینه ادامه می‌دهد.`, "success");
+        }
+        return result;
+      }).catch(() => null)
+    : null;
+  const early = await Promise.race([
+    corePromise,
+    ...(scoutResultPromise ? [scoutResultPromise] : []),
+    wait(6500).then(() => ({
+      status: "background",
+      provider: "ai-conveyor",
+      degraded: true,
+      analysis: state.videoAnalysis || { summary: "", facts: [], scenes: [], script: "", providers: [] }
+    }))
+  ]);
+  if (early?.status === "background") {
+    log("⚡ تحلیل سریع تحویل شد؛ Gemini و AIهای تصویری دیگر بدون مسدودکردن صفحه در پس‌زمینه ادامه می‌دهند.", "success");
+  }
+  return early;
+}
+
+async function runVideoAnalysisCore(options = {}) {
   const allowDegraded = Boolean(options?.allowDegraded);
   const video = state.assets.find(isVideoFile);
   if (!video || state.videoAnalysisBusy) return null;
@@ -431,6 +465,10 @@ async function analyzeUploadedVideo(options = {}) {
   // The video-analysis function may finish after the main conveyor has already
   // moved into script/voice/render. Once released, late AI results may enrich
   // state/logs, but they MUST NOT rewind the global stage or progress bar.
+  // These flags are declared before any background lane is kicked off because
+  // the fast scout may report progress almost immediately on mobile.
+  let pipelineReleased = false;
+  let lastFailure = null;
   const analysisProgress = (...args) => {
     if (!state.conveyorReleased && !pipelineReleased) setProgress(...args);
   };
@@ -690,6 +728,17 @@ async function analyzeUploadedVideo(options = {}) {
       providerModels: payloads.map(x => x.model || "").filter(Boolean)
     };
   };
+
+  // Start the fast visual lane BEFORE any Gemini upload/File-API preparation.
+  // This is important on mobile: a large Gemini upload must never delay
+  // Groq/OpenRouter from receiving their keyframes.
+  const earlyScoutPromise = startParallelScouts().catch(error => {
+    lastFailure = error;
+    log(`⚠️ مسیر سریع Groq/OpenRouter آماده نشد؛ Gemini و خط تولید اصلی ادامه می‌دهند. ${String(error?.message || error)}`, "warning");
+    return null;
+  });
+  state.videoScoutPromise = earlyScoutPromise;
+
   try {
     const size = Number(video.size || 0);
     if (!size) throw new Error("حجم ویدئو معتبر نیست.");
@@ -786,11 +835,9 @@ async function analyzeUploadedVideo(options = {}) {
 
     let resultPayload = null;
     let completed = false;
-    let lastFailure = null;
 
     // Once any valid AI result wins, the production conveyor owns the UI.
     // Slower Gemini polling must never write 68/74% back over the next stage.
-    let pipelineReleased = false;
     const analysisSetProgress = (...args) => {
       if (!pipelineReleased) analysisProgress(...args);
     };
@@ -858,11 +905,7 @@ async function analyzeUploadedVideo(options = {}) {
     // IMPORTANT: a rejected scout lane is NOT a production failure. The
     // browser must keep the conveyor moving even when Gemini, Groq or
     // OpenRouter is temporarily unavailable.
-    const scoutLane = startParallelScouts().catch(error => {
-      lastFailure = error;
-      log(`⚠️ مسیر تصویری Groq/OpenRouter شکست خورد؛ خط تولید متوقف نمی‌شود. ${String(error?.message || error)}`, "warning");
-      return null;
-    });
+    const scoutLane = earlyScoutPromise;
     const geminiLane = runGeminiLane().catch(error => {
       lastFailure = error;
       log(`⚠️ مسیر Gemini در این نوبت نتیجه نداد؛ AIهای دیگر و خط تولید ادامه می‌دهند. ${String(error?.message || error)}`, "warning");
@@ -1001,8 +1044,10 @@ $("#files").onchange = e => {
 };
 
 $("#videoAnalysisBtn").onclick = async () => {
-  if (state.busy) return;
-  try { await analyzeUploadedVideo(); } catch (_) {}
+  if (state.busy || state.videoAnalysisBusy) return;
+  try {
+    await analyzeUploadedVideo({ fastReturn: true });
+  } catch (_) {}
 };
 $("#music").onchange = e => { const f = e.target.files[0]; $("#musicName").textContent = f ? f.name : "اختیاری"; };
 $("#lang").onchange = e => { state.language = e.target.value; setDir(); $("#brand").placeholder = t("brandPlaceholder"); $("#desc").placeholder = t("descPlaceholder"); };
