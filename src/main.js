@@ -428,7 +428,12 @@ async function analyzeUploadedVideo(options = {}) {
   if (!video || state.videoAnalysisBusy) return null;
   state.videoAnalysisBusy = true;
   updateVideoAnalysisUI();
-  const analysisProgress = (...args) => { if (!state.conveyorReleased) setProgress(...args); };
+  // The video-analysis function may finish after the main conveyor has already
+  // moved into script/voice/render. Once released, late AI results may enrich
+  // state/logs, but they MUST NOT rewind the global stage or progress bar.
+  const analysisProgress = (...args) => {
+    if (!state.conveyorReleased && !pipelineReleased) setProgress(...args);
+  };
   setStage(0);
   analysisProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود؛ در صورت خطای سرویس، OpenRouter Free خودکار فعال می‌شود…");
   log("تحلیل هوشمند ویدئوی معرفی شروع شد.", "info");
@@ -924,15 +929,16 @@ async function analyzeUploadedVideo(options = {}) {
       log(`تحلیل ویدئو کامل شد: ${scenes.length} بخش مهم شناسایی شد.`, "success");
       scenes.slice(0, 8).forEach((scene, i) => log(`${String(i + 1).padStart(2, "0")} · ${scene.start || ""}${scene.end ? `–${scene.end}` : ""} · ${scene.title || scene.description || "بخش ویدئو"}`));
     } else log("تحلیل ویدئو کامل شد و سناریوی مبتنی بر محتوای واقعی آماده است.", "success");
-    // Video analysis belongs to stage 1 (information/media preparation).
-    // Mark it complete before the script stage starts so the UI never shows
-    // a misleading 42% with stage 01 still active.
-    setStage(0, "done");
-    setStage(1, "active");
-    // Never leave the global pipeline parked at the old analysis value (18%).
-    // 18% is only an internal analysis milestone; once the analysis result is
-    // actually available, the production pipeline is already in the script lane.
-    analysisProgress(22, "سناریو", "تحلیل ویدئو کامل شد؛ سناریو وارد مرحله تولید شد.");
+    // IMPORTANT: this function can finish late, after the main conveyor has
+    // already moved to script/voice/render. In that case this is only a late
+    // enrichment result. Never rewind the visible stage/progress back to 22%.
+    if (!state.conveyorReleased && !pipelineReleased) {
+      setStage(0, "done");
+      setStage(1, "active");
+      analysisProgress(22, "سناریو", "تحلیل ویدئو کامل شد؛ سناریو وارد مرحله تولید شد.");
+    } else {
+      log("🤝 نتیجه دیررس تحلیل ویدئو دریافت شد؛ فقط برای غنی‌سازی استفاده شد و خط تولید به عقب برنگشت.", "success");
+    }
     return result;
   } catch (e) {
     const detail = String(e?.message || e);
