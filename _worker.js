@@ -1,10 +1,11 @@
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
       return json({ ok: true, service: "AD Maker AI", version: "4.7.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), groqConfigured: Boolean(env.GROQ_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
+    if (url.pathname === "/api/ai/work-pool" && request.method === "POST") return aiWorkPool(request, env, ctx);
     if (url.pathname === "/api/analyze-video/upload" && request.method === "POST") return uploadAnalysisVideo(request, env);
     if (url.pathname === "/api/analyze-video/upload-start" && request.method === "POST") return uploadAnalysisVideoStart(request, env);
     if (url.pathname === "/api/analyze-video/upload-chunk" && request.method === "POST") return uploadAnalysisVideoChunk(request, env);
@@ -722,6 +723,111 @@ async function safeGoogleError(response) {
   }
 }
 
+
+async function aiWorkPool(request, env, ctx) {
+  try {
+    const b = await request.json();
+    const phase = String(b.phase || "script").toLowerCase();
+    const brand = String(b.brand || "").trim();
+    const description = String(b.description || "").trim();
+    const language = String(b.language || "fa").toLowerCase();
+    const duration = Math.max(15, Math.min(300, Number(b.duration) || 60));
+    const analysis = b.analysis && typeof b.analysis === "object" ? b.analysis : {};
+    const script = String(b.script || analysis.script || "").trim();
+    const targetWords = Math.max(35, Math.min(900, Number(b.targetWords) || Math.round(duration * 2.2)));
+    const langName = { en:"English", fa:"Persian", ps:"Pashto", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" }[language] || "Persian";
+    const shared = `Brand: ${brand}\nUser description: ${description}\nLanguage: ${langName}\nDuration: ${duration}s\nVerified video summary: ${String(analysis.summary || "")}\nVerified facts: ${(Array.isArray(analysis.facts) ? analysis.facts : []).join(" | ")}\nScenes: ${(Array.isArray(analysis.scenes) ? analysis.scenes : []).map(x => `${x.start || ""}-${x.end || ""} ${x.title || ""}: ${x.description || ""}`).join(" | ")}\nExisting script: ${script}`;
+
+    let prompt;
+    if (phase === "plan") {
+      prompt = `You are a production specialist inside AD Maker AI. Continue the work from the shared context below. Do NOT rewrite the entire ad unless needed. Produce a compact production plan that helps a browser renderer finish the video: scene order, which uploaded visual should be used where, subtitle/caption cues, transitions, pacing, and a short QA checklist. Use only verified facts. Return JSON only with keys: scenes, captions, transitions, qa.\n\n${shared}`;
+    } else {
+      prompt = `You are one member of a multi-AI advertising team. Build the final spoken advertising script from the shared verified context. Do not invent facts. Make it natural and long enough for ${duration} seconds (about ${targetWords} words). Return ONLY the spoken script, with no headings or notes.\n\n${shared}`;
+    }
+
+    const jobs = [];
+    const validJob = (provider, promise) => promise.then(result => {
+      const text = String(result || "").trim();
+      if (!text) throw new Error(`${provider} returned an empty result`);
+      return { provider, result: text };
+    });
+    if (env.GEMINI_API_KEY) jobs.push(validJob("gemini", geminiTextWork(env.GEMINI_API_KEY, prompt, phase === "plan" ? 1800 : 2600)));
+    if (env.GROQ_API_KEY) jobs.push(validJob("groq", groqTextWork(env.GROQ_API_KEY, prompt, phase === "plan" ? 1800 : 2600)));
+    if (env.OPENROUTER_API_KEY) jobs.push(validJob("openrouter", openRouterScript(env.OPENROUTER_API_KEY, prompt, request, phase === "plan" ? 1800 : 2600)));
+    if (env.AI) jobs.push(validJob("cloudflare-ai", cloudflareTextWork(env.AI, prompt, phase === "plan" ? 1400 : 2200)));
+
+    if (!jobs.length) return json({ ok: false, phase, error: "no_ai_provider_configured", providers: [], outputs: [] }, 503);
+
+    // Script phase is latency-critical: return the first valid specialist result
+    // immediately, while the other specialists continue in the background.
+    // Cloudflare waitUntil keeps those helper jobs alive after the response for
+    // the supported background window. The production pipeline never waits on
+    // a slow specialist.
+    if (phase === "script") {
+      const winner = await Promise.any(jobs);
+      if (ctx?.waitUntil) ctx.waitUntil(Promise.allSettled(jobs));
+      const chosenScript = normalizeScript(winner?.result || "", targetWords);
+      if (!chosenScript) return json({ ok: false, phase, error: "empty_script_result", provider: winner?.provider || "AI" }, 502);
+      return json({ ok: true, phase, provider: winner.provider, providersStarted: jobs.length, script: chosenScript, background: true });
+    }
+
+    // Plan phase is deliberately non-blocking on the browser side, so here we
+    // can let every specialist finish and merge their production suggestions.
+    const settled = await Promise.allSettled(jobs);
+    const outputs = settled.map(x => x.status === "fulfilled" && x.value?.result ? { provider: x.value.provider, result: x.value.result } : null).filter(Boolean);
+    const first = outputs[0] || null;
+    if (!first) return json({ ok: false, phase, error: "no_ai_result", providers: [], outputs: [] }, 503);
+    const parsed = outputs.map(x => ({ provider: x.provider, plan: tryParseJson(x.result) })).filter(x => x.plan);
+    const merged = mergeProductionPlans(parsed.map(x => x.plan));
+    return json({ ok: true, phase, provider: first.provider, providers: outputs.map(x => x.provider), plan: merged, outputs: outputs.map(x => ({ provider: x.provider, result: x.result.slice(0, 8000) })) });
+  } catch (e) {
+    return json({ ok: false, error: "ai_work_pool_failed", detail: String(e?.message || e) }, 500);
+  }
+}
+
+async function groqTextWork(apiKey, prompt, maxTokens = 2200) {
+  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "qwen/qwen3.8-27b", messages: [{ role: "user", content: prompt }], temperature: 0.35, max_completion_tokens: maxTokens })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j?.error?.message || `Groq HTTP ${r.status}`);
+  return String(j?.choices?.[0]?.message?.content || "").trim();
+}
+
+async function geminiTextWork(apiKey, prompt, maxTokens = 2400) {
+  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent", {
+    method: "POST",
+    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.35, maxOutputTokens: maxTokens } })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j?.error?.message || `Gemini HTTP ${r.status}`);
+  return extractGenerateContentText(j);
+}
+
+async function cloudflareTextWork(binding, prompt, maxTokens = 1800) {
+  const out = await binding.run("@cf/meta/llama-3.1-8b-instruct", { prompt, max_tokens: maxTokens });
+  return String(out?.response || "").trim();
+}
+
+function tryParseJson(text) {
+  try { return parseJsonObject(text); } catch (_) { return null; }
+}
+
+function mergeProductionPlans(plans) {
+  const scenes = [], captions = [], transitions = [], qa = [];
+  const addUnique = (arr, value, key) => { if (!value) return; const k = String(key || value).toLowerCase(); if (!arr.some(x => String(x?.key || x).toLowerCase() === k)) arr.push(value); };
+  for (const p of plans) {
+    for (const x of Array.isArray(p?.scenes) ? p.scenes : []) addUnique(scenes, x, `${x.start || ""}|${x.end || ""}|${x.title || ""}`);
+    for (const x of Array.isArray(p?.captions) ? p.captions : []) addUnique(captions, x, typeof x === "string" ? x : `${x.time || ""}|${x.text || ""}`);
+    for (const x of Array.isArray(p?.transitions) ? p.transitions : []) addUnique(transitions, x, typeof x === "string" ? x : JSON.stringify(x));
+    for (const x of Array.isArray(p?.qa) ? p.qa : []) addUnique(qa, x, typeof x === "string" ? x : JSON.stringify(x));
+  }
+  return { scenes: scenes.slice(0, 60), captions: captions.slice(0, 120), transitions: transitions.slice(0, 60), qa: qa.slice(0, 40) };
+}
+
 async function generateScript(request, env) {
   try {
     const b = await request.json();
@@ -739,7 +845,7 @@ async function generateScript(request, env) {
       : "";
     const videoAnalysis = b.videoAnalysis || null;
     const videoInstruction = videoAnalysis
-      ? `\nIMPORTANT: Multiple AI analyzers may have contributed to this demonstration-video analysis. Treat the shared context below as evidence, reconcile overlapping observations, and prefer concrete observations over speculation. If analyzers disagree, keep only claims supported by the video or user description. The voice-over MUST follow what is actually shown in the video. Never invent prices, discounts, statistics, ratings, guarantees, locations, users, or unsupported features.\n\nAnalysis providers:\n${Array.isArray(videoAnalysis.providers) ? videoAnalysis.providers.join(" + ") : "video analyzer"}\n\nVideo summary:\n${String(videoAnalysis.summary || "")}\n\nVerified facts:\n${Array.isArray(videoAnalysis.facts) ? videoAnalysis.facts.join("\n- ") : ""}\n\nVideo scenes:\n${Array.isArray(videoAnalysis.scenes) ? videoAnalysis.scenes.map(s => `${s.start || ""}-${s.end || ""}: ${s.title || ""}. ${s.description || ""}`).join("\n") : ""}\n\nVideo analyzer draft:\n${String(videoAnalysis.recommendedScript || "")}`
+      ? `\nIMPORTANT: A demonstration video was analyzed. The voice-over MUST follow what is actually shown in the video. Use the scene order and verified facts below. Do not invent anything not supported by the video or user description.\n\nVideo summary:\n${String(videoAnalysis.summary || "")}\n\nVerified facts:\n${Array.isArray(videoAnalysis.facts) ? videoAnalysis.facts.join("\n- ") : ""}\n\nVideo scenes:\n${Array.isArray(videoAnalysis.scenes) ? videoAnalysis.scenes.map(s => `${s.start || ""}-${s.end || ""}: ${s.title || ""}. ${s.description || ""}`).join("\n") : ""}\n\nVideo analyzer draft:\n${String(videoAnalysis.recommendedScript || "")}`
       : "";
 
     const prompt = `You are an expert advertising copywriter creating a complete voice-over for an Afghanistan-focused product advertisement.
