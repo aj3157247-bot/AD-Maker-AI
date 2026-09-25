@@ -573,7 +573,7 @@ async function analyzeUploadedVideo() {
       log("مرحله ۲: مسیر مستقیم ویدئو آماده شد؛ بدون URI فایل Gemini تحلیل شروع می‌شود.", "success");
     }
 
-    setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
+    setProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی سریع و واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
     log("مرحله ۳: تحلیل واقعی ویدئو با Gemini Interactions و اجرای پس‌زمینه شروع شد.");
     const failedModels = new Set();
     const maxFallbacks = geminiPreparationFailed ? 0 : 2;
@@ -614,6 +614,12 @@ async function analyzeUploadedVideo() {
         const interactionId = String(started?.interactionId || started?.id || "");
         if (!interactionId) throw new Error(started?.detail || "Gemini شناسه عملیات تحلیل را برنگرداند.");
         const activeModel = String(started?.model || "");
+        const interactionStartedAt = Date.now();
+        // Fast capacity protection: don't leave the user watching 68% for
+        // several minutes when Gemini is clearly stuck in queue/capacity.
+        // The normal Gemini path still gets enough time for genuine processing.
+        const queuedFailoverMs = 35_000;
+        const processingFailoverMs = 75_000;
         log(`تحلیل پس‌زمینه Gemini شروع شد${activeModel ? ` با ${activeModel}` : ""}.`, "success");
 
         for (let poll = 1; poll <= 120; poll += 1) {
@@ -635,6 +641,38 @@ async function analyzeUploadedVideo() {
             break;
           }
           const st = String(status?.status || "in_progress").toLowerCase();
+          const elapsedMs = Date.now() - interactionStartedAt;
+          const capacityHint = String(status?.detail || status?.error?.message || "");
+          const looksCapacityBusy = /high demand|rate limit|resource exhausted|quota|capacity|unavailable|temporar|503|429/i.test(capacityHint);
+
+          // Gemini's background API can keep an interaction queued/in progress
+          // without returning a 503 to the browser. If that happens for too long,
+          // treat it as a capacity problem and hand off to OpenRouter instead
+          // of waiting up to ~6 minutes.
+          if (!completed && attempt < maxFallbacks &&
+              ((st === "queued" && elapsedMs >= queuedFailoverMs) ||
+               (st === "in_progress" && elapsedMs >= processingFailoverMs && looksCapacityBusy))) {
+            const failedModel = String(status?.failedModel || activeModel || "");
+            if (failedModel) failedModels.add(failedModel);
+            lastFailure = new Error(
+              st === "queued"
+                ? `Gemini بیش از ${Math.round(queuedFailoverMs / 1000)} ثانیه در صف ماند؛ انتقال هوشمند انجام می‌شود.`
+                : `Gemini ظرفیت کافی نشان نداد؛ انتقال هوشمند انجام می‌شود.`
+            );
+            log(`Gemini هنوز آماده پاسخ نیست؛ برای جلوگیری از گیرکردن روی 68٪، مسیر جایگزین فعال می‌شود${failedModel ? ` (${failedModel})` : ""}.`, "warning");
+            break;
+          }
+
+          // If the service explicitly reports a capacity problem, fail over
+          // immediately instead of waiting for another polling cycle.
+          if (!completed && attempt < maxFallbacks && looksCapacityBusy && /queued|in_progress/i.test(st)) {
+            const failedModel = String(status?.failedModel || activeModel || "");
+            if (failedModel) failedModels.add(failedModel);
+            lastFailure = new Error(status?.detail || "Gemini ظرفیت کافی ندارد.");
+            log(`Gemini High Demand/ظرفیت را گزارش کرد؛ مدل بعدی فوراً امتحان می‌شود${failedModel ? ` (${failedModel})` : ""}.`, "warning");
+            break;
+          }
+
           if (status?.status === "completed" && status?.analysis) {
             resultPayload = status;
             completed = true;
@@ -672,8 +710,8 @@ async function analyzeUploadedVideo() {
       }
     }
     if (!completed || !resultPayload) {
-      setProgress(72, "موتور جایگزین", "Gemini در دسترس نبود؛ موتور رایگان چندمدلی OpenRouter در حال آماده‌سازی است…");
-      log("Gemini نتوانست تحلیل را کامل کند؛ OpenRouter Free با چند مدل چندرسانه‌ای و Failover خودکار فعال شد.", "warning");
+      setProgress(72, "موتور جایگزین", "Gemini ظرفیت کافی نداشت؛ OpenRouter Free فوراً در حال آماده‌سازی است…");
+      log("Gemini ظرفیت/High Demand داشت؛ OpenRouter Free با Failover خودکار و چند مدل چندرسانه‌ای فعال شد.", "warning");
       try {
         const captured = await captureFallbackFrames(video, 12);
         setProgress(76, "موتور جایگزین", `${captured.frames.length} فریم سبک‌شده آماده شد؛ OpenRouter در حال انتخاب خودکار مدل رایگان مناسب است…`);
