@@ -1029,46 +1029,61 @@ $("#scriptBtn").onclick = async () => {
     setStage(0, "done");
     setStage(1); setProgress(22, "سناریو", state.scriptMode === "manual" ? "سناریوی اختصاصی تو آماده می‌شود." : state.scriptMode === "hybrid" ? "AI سناریوی تو را حرفه‌ای‌تر و منسجم‌تر می‌کند." : t("script"));
     let j;
+    let productionPlanPromise = null;
     if (state.scriptMode === "manual") {
       j = { script: customScript, fallback: false, provider: "user" };
       log("سناریوی اختصاصی کاربر انتخاب شد.", "success");
     } else {
-      // If video analysis already produced a usable script, use it immediately.
-      // This avoids sending a second blocking AI request and fixes the old
-      // state where the UI could remain at 18% even though analysis was done.
-      const analyzedScript = String(videoAnalysis?.script || "").trim();
       const targetWords = targetWordsForDuration(state.duration);
-      const analyzedWords = analyzedScript.split(/\s+/).filter(Boolean).length;
-      // Any non-empty script from a successful video-analysis AI is a valid hand-off.
-      // Never block voice/render just because the script is shorter than the ideal word target.
-      const usableAnalyzedScript = Boolean(analyzedScript);
-
-      // A verified video-analysis script is a valid hand-off. Never force the
-      // production pipeline to wait for another text-AI request just because
-      // several visual AIs contributed. The other specialists have already
-      // enriched videoAnalysis; voice/render can start immediately.
-      if (usableAnalyzedScript) {
-        j = { script: analyzedScript, fallback: false, provider: videoAnalysis?.providers?.[0] || "video-analysis" };
-        log(`سناریوی معتبر از زمینه مشترک AIها مستقیم تحویل شد (${analyzedWords} کلمه)؛ مرحله دوم AI سد راه تولید نیست.`, "success");
-
-        // Optional enrichment is a true background helper. It gets at most 1.5s
-        // and can never become a gate for the production pipeline.
-        if (analyzedWords < Math.max(20, Math.round(targetWords * 0.55))) {
-          const enrichmentBody = { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords, videoAnalysis: { summary: videoAnalysis?.summary || "", scenes: videoAnalysis?.scenes || [], facts: videoAnalysis?.facts || [], recommendedScript: analyzedScript, coordinated: Boolean(videoAnalysis?.coordinated), providers: Array.isArray(videoAnalysis?.providers) ? videoAnalysis.providers : [], providerModels: Array.isArray(videoAnalysis?.providerModels) ? videoAnalysis.providerModels : [] } };
-          api("/api/generate-script", enrichmentBody, 1500).then(enriched => {
-            if (enriched?.script) log("AI تکمیلی در پس‌زمینه پاسخ داد؛ سناریوی اصلی قبلاً وارد گویندگی شده بود.", "info");
-          }).catch(() => {});
-          log("سناریوی تصویری معتبر است؛ گویندگی بدون انتظار برای AI تکمیلی شروع می‌شود.", "info");
+      const currentAnalysis = videoAnalysis || {};
+      // AI WORK POOL: every configured AI gets the same verified context now.
+      // The first usable script unlocks the production lane; slower specialists
+      // keep working and their results are retained for the next stage.
+      try {
+        log("🚀 اتاق کار AI فعال شد: Gemini + Groq + OpenRouter + Cloudflare AI همزمان روی سناریو کار می‌کنند.", "info");
+        const pool = await api("/api/ai/work-pool", {
+          brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "",
+          scriptMode: state.scriptMode, language: state.language, duration: state.duration,
+          targetWords, phase: "script",
+          analysis: {
+            summary: currentAnalysis.summary || "",
+            facts: Array.isArray(currentAnalysis.facts) ? currentAnalysis.facts : [],
+            scenes: Array.isArray(currentAnalysis.scenes) ? currentAnalysis.scenes : [],
+            script: currentAnalysis.script || ""
+          }
+        }, 12000);
+        if (pool?.script) {
+          j = { script: String(pool.script).trim(), fallback: false, provider: pool.provider || "ai-work-pool" };
+          log(`⚡ سناریو آماده شد؛ ${Array.isArray(pool.providers) ? pool.providers.length : 1} موتور AI همزمان روی آن کار کردند.`, "success");
+          if (Array.isArray(pool.providers) && pool.providers.length) log(`همکاران سناریو: ${pool.providers.join(" + ")}.`, "info");
         }
-      } else {
-        // No usable visual script: use the normal text-AI path, but keep the
-        // timeout short so a provider outage cannot freeze the whole pipeline.
+      } catch (poolError) {
+        log(`اتاق کار AI پاسخ کامل نداد؛ از سناریوی تحلیل ویدئو/مسیر پشتیبان استفاده می‌شود. ${String(poolError?.message || poolError)}`, "warning");
+      }
+
+      if (!j) {
+        const analyzedScript = String(currentAnalysis.script || "").trim();
+        if (analyzedScript) {
+          j = { script: analyzedScript, fallback: false, provider: currentAnalysis.providers?.[0] || "video-analysis" };
+          log("سناریوی معتبر تحلیل ویدئو مستقیم وارد گویندگی شد؛ AIهای دیگر در پس‌زمینه ادامه می‌دهند.", "success");
+        }
+      }
+
+      if (!j) {
         try {
-          j = await api("/api/generate-script", { brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "", scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords, videoAnalysis: videoAnalysis ? { summary: videoAnalysis.summary || "", scenes: videoAnalysis.scenes || [], facts: videoAnalysis.facts || [], recommendedScript: videoAnalysis.script || "", coordinated: Boolean(videoAnalysis.coordinated), providers: Array.isArray(videoAnalysis.providers) ? videoAnalysis.providers : [], providerModels: Array.isArray(videoAnalysis.providerModels) ? videoAnalysis.providerModels : [] } : null }, 8000);
-          if (j.fallback) log(`API سناریو پاسخ کامل نداد؛ حالت داخلی فعال شد. علت: ${j.detail || j.error || "خطای نامشخص"}`, "warning");
+          j = await api("/api/generate-script", {
+            brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "",
+            scriptMode: state.scriptMode, language: state.language, duration: state.duration, style: state.style, targetWords,
+            videoAnalysis: videoAnalysis ? {
+              summary: videoAnalysis.summary || "", facts: videoAnalysis.facts || [], scenes: videoAnalysis.scenes || [],
+              recommendedScript: videoAnalysis.script || "", coordinated: Boolean(videoAnalysis.coordinated),
+              providers: Array.isArray(videoAnalysis.providers) ? videoAnalysis.providers : [],
+              providerModels: Array.isArray(videoAnalysis.providerModels) ? videoAnalysis.providerModels : []
+            } : null
+          }, 8000);
         } catch (e) {
           j = { script: fallbackScript(brand, desc), fallback: true, provider: "local", error: "frontend_api_error" };
-          log("AI سناریو در زمان مجاز پاسخ نداد؛ سناریوی داخلی برای ادامه تولید استفاده شد.", "warning");
+          log("هیچ موتور سناریو در زمان مجاز پاسخ نداد؛ سناریوی داخلی فقط برای جلوگیری از توقف کامل استفاده شد.", "warning");
         }
       }
     }
@@ -1079,6 +1094,24 @@ $("#scriptBtn").onclick = async () => {
     const actualWords = state.script.trim().split(/\s+/).filter(Boolean).length;
     log(`${actualWords} کلمه برای ویدئوی ${Math.round(state.duration / 60) >= 1 ? `${Math.round(state.duration / 60)} دقیقه` : `${state.duration} ثانیه`} آماده شد؛ هدف تقریبی ${expectedWords} کلمه است.`, actualWords >= Math.round(expectedWords * 0.72) ? "success" : "info");
     log(state.scriptMode === "manual" ? "سناریوی اختصاصی آماده شد." : state.scriptMode === "hybrid" ? "سناریو با همکاری کاربر و AI آماده شد." : (j.fallback ? t("fallback") : "سناریوی هوشمند با موفقیت دریافت شد."), j.fallback ? "info" : "success");
+
+    // While ElevenLabs is speaking, the visual/QA specialists keep working.
+    productionPlanPromise = api("/api/ai/work-pool", {
+      brand, description: desc, language: state.language, duration: state.duration,
+      targetWords: targetWordsForDuration(state.duration), phase: "plan", script: state.script,
+      analysis: {
+        summary: videoAnalysis?.summary || "", facts: videoAnalysis?.facts || [],
+        scenes: videoAnalysis?.scenes || [], script: state.script
+      }
+    }, 120000).then(plan => {
+      state.aiProductionPlan = plan?.plan || null;
+      if (Array.isArray(plan?.providers)) log(`🎯 AIهای همکار در زمان گویندگی هم بیکار نبودند: ${plan.providers.join(" + ")}. برنامه صحنه و کنترل کیفیت آماده شد.`, "success");
+      return plan;
+    }).catch(err => {
+      log(`برنامه‌ریزی موازی صحنه تکمیل نشد؛ رندر با اطلاعات موجود ادامه پیدا می‌کند. ${String(err?.message || err)}`, "info");
+      return null;
+    });
+
     setStage(1, "done");
     setProgress(40, "سناریو آماده", "سناریو تأیید شد؛ بدون انتظار برای AI دیگر وارد گویندگی می‌شویم.");
     log("مرحله سناریو با موفقیت کامل شد و تیک خورد.", "success");
@@ -1099,7 +1132,10 @@ $("#scriptBtn").onclick = async () => {
     }
     setStage(2, "done"); setProgress(52, "گویندگی آماده", t("voiceReady")); log(t("voiceReady"), "success");
 
-    setStage(3); setProgress(55, "صحنه‌ها", "رسانه‌ها، متن و رنگ برند برای ویدئو چیده می‌شوند..."); log("مرحله صحنه‌ها شروع شد."); await wait(350); setStage(3, "done");
+    setStage(3); setProgress(55, "صحنه‌ها", "رسانه‌ها، متن و رنگ برند برای ویدئو چیده می‌شوند..."); log("مرحله صحنه‌ها شروع شد؛ نتیجه AIهای همکار در صورت آماده‌بودن ادغام می‌شود.");
+    if (productionPlanPromise) await Promise.race([productionPlanPromise, wait(800)]);
+    if (state.aiProductionPlan?.scenes?.length) log(`برنامه مشترک AI برای ${state.aiProductionPlan.scenes.length} صحنه آماده شد و در رندر استفاده می‌شود.`, "success");
+    await wait(350); setStage(3, "done");
     setProgress(62, "صحنه‌ها آماده", "سناریو، گویندگی و صحنه‌بندی کامل شد؛ آماده رندر نهایی.");
     // This is the only gate for the final button: a real script + real audio.
     // Always explicitly unlock it here, even if an earlier analysis stage updated
