@@ -20,6 +20,7 @@ const state = {
   voiceMode: "none",
   videoAnalysis: null,
   videoAnalysisBusy: false,
+  videoAnalysisJobActive: false,
   conveyorReleased: false,
   backgroundVideoAnalysisPromise: null
 };
@@ -432,7 +433,7 @@ function updateVideoAnalysisUI() {
   if (!box || !btn || !status) return;
   const hasVideo = state.assets.some(isVideoFile);
   box.hidden = !hasVideo;
-  btn.disabled = state.videoAnalysisBusy || !hasVideo;
+  btn.disabled = state.videoAnalysisBusy || state.videoAnalysisJobActive || !hasVideo;
   btn.textContent = state.videoAnalysisBusy ? "در حال تحلیل…" : state.videoAnalysis ? "تحلیل دوباره" : "تحلیل ویدئو";
   if (state.videoAnalysis) {
     const scenes = Array.isArray(state.videoAnalysis.scenes) ? state.videoAnalysis.scenes.length : 0;
@@ -445,14 +446,24 @@ function updateVideoAnalysisUI() {
 async function analyzeUploadedVideo(options = {}) {
   const allowDegraded = Boolean(options?.allowDegraded);
   const video = state.assets.find(isVideoFile);
-  if (!video || state.videoAnalysisBusy) return null;
+  if (!video || state.videoAnalysisBusy || state.videoAnalysisJobActive) return null;
   state.videoAnalysisBusy = true;
+  state.videoAnalysisJobActive = true;
+  let releasedByWatchdog = false;
+  let watchdogTimer = setTimeout(() => {
+    if (!state.videoAnalysisJobActive) return;
+    releasedByWatchdog = true;
+    state.conveyorReleased = true;
+    state.videoAnalysisBusy = false;
+    updateVideoAnalysisUI();
+    log("⚡ تحلیل تصویری طولانی شد؛ خط تولید منتظر نمی‌ماند. سناریو، گویندگی و رندر می‌توانند همزمان ادامه پیدا کنند و نتیجه تحلیل بعداً برای غنی‌سازی وارد می‌شود.", "warning");
+  }, 12000);
   updateVideoAnalysisUI();
   // The video-analysis function may finish after the main conveyor has already
   // moved into script/voice/render. Once released, late AI results may enrich
   // state/logs, but they MUST NOT rewind the global stage or progress bar.
   const analysisProgress = (...args) => {
-    if (!state.conveyorReleased && !pipelineReleased) setProgress(...args);
+    if (!state.conveyorReleased) setProgress(...args);
   };
   setStage(0);
   analysisProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود؛ در صورت خطای سرویس، OpenRouter Free خودکار فعال می‌شود…");
@@ -978,6 +989,10 @@ async function analyzeUploadedVideo(options = {}) {
       };
     }
     // Manual video-analysis requests still show a real error to the user.
+    if (releasedByWatchdog) {
+      log(`⚡ تحلیل پس‌زمینه بعد از تحویل خط تولید با خطا تمام شد؛ نتیجه اصلی تولید بدون توقف ادامه می‌یابد. ${detail}`, "warning");
+      return state.videoAnalysis;
+    }
     setStage(0, "error");
     analysisProgress(68, "تحلیل متوقف شد", detail.includes("سهمیه روزانه") || detail.includes("daily quota")
       ? "سهمیه روزانه Gemini تمام شده است؛ بعد از بازنشانی سهمیه دوباره تلاش کن."
@@ -985,7 +1000,9 @@ async function analyzeUploadedVideo(options = {}) {
     log(`تحلیل ویدئو انجام نشد: ${detail}`, "error");
     throw new Error(detail);
   } finally {
+    clearTimeout(watchdogTimer);
     state.videoAnalysisBusy = false;
+    state.videoAnalysisJobActive = false;
     updateVideoAnalysisUI();
   }
 }
@@ -1536,7 +1553,7 @@ $("#downloadBtn").onclick = () => {
 };
 
 $("#rerenderBtn").onclick = () => $("#renderBtn").click();
-$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.buildMode = "pro"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".creation-mode").forEach(x => x.classList.toggle("active", x.dataset.buildMode === "pro")); updateBuildModeUI(); $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
+$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.buildMode = "pro"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; state.videoAnalysisJobActive = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".creation-mode").forEach(x => x.classList.toggle("active", x.dataset.buildMode === "pro")); updateBuildModeUI(); $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
 $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line muted"><span>●</span> منتظر عملیات بعدی...</div>`; };
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
 $("#scriptMore").onclick = () => { const box = $("#scriptEditor"); const details = $(".script-details"); details.open = true; box.classList.toggle("expanded"); $("#scriptMore").textContent = box.classList.contains("expanded") ? "کمتر" : "بیشتر"; if (box.classList.contains("expanded")) { box.style.height = "auto"; box.style.height = `${Math.max(180, box.scrollHeight)}px`; } else box.style.height = "82px"; };
