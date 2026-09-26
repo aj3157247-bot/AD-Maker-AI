@@ -29,7 +29,7 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 
 const copy = {
   fa: {
-    dir: "rtl", langName: "فارسی", brandPlaceholder: "مثلاً بازارک",
+    dir: "rtl", langName: "دری افغانستان", brandPlaceholder: "مثلاً بازارک",
     descPlaceholder: "محصول، خدمات، سایت یا اپلیکیشن را توضیح بده. چه مشکلی را حل می‌کند و مهم‌ترین مزیت آن چیست؟",
     ready: "آماده برای ساخت", analyze: "در حال تحلیل اطلاعات و رسانه‌ها...", script: "در حال نوشتن سناریوی تبلیغاتی...",
     voice: "در حال ساخت گویندگی حرفه‌ای...", render: "در حال ساخت و رندر ویدئو...", done: "تبلیغ شما آماده است 🎉",
@@ -117,7 +117,7 @@ function renderShell() {
             <div class="creation-mode-head"><label>حالت ساخت تبلیغ</label><span id="selectedBuildMode">حرفه‌ای · تحلیل + AI</span></div>
             <div class="creation-mode-grid">
               <button type="button" class="creation-mode active" data-build-mode="pro">
-                <i>🎬</i><span>ساخت حرفه‌ای</span><small>تحلیل رسانه، سناریوی AI، گویندگی، رندر خودکار</small><em>توصیه‌شده</em>
+                <i>🎬</i><span>ساخت حرفه‌ای</span><small>تحلیل رسانه، سناریوی AI، گویندگی و رندر</small><em>توصیه‌شده</em>
               </button>
               <button type="button" class="creation-mode" data-build-mode="fast">
                 <i>⚡</i><span>ساخت سریع</span><small>بدون تحلیل عمیق ویدئو؛ سریع‌تر به سناریو و صدا می‌رسد</small><em>سریع</em>
@@ -213,6 +213,26 @@ function log(message, type = "info") {
 }
 
 function escapeHtml(v) { return String(v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[c])); }
+
+function startConveyorWatchdog() {
+  const startedAt = Date.now();
+  let stopped = false;
+  const timer = setInterval(() => {
+    if (stopped || !state.busy) return;
+    // The visual-analysis lane is background work. It is never allowed to
+    // leave the main conveyor visually parked on stage 01.
+    if (state.currentStage === 0 && Date.now() - startedAt >= 1800) {
+      state.conveyorReleased = true;
+      setStage(0, "done");
+      setStage(1, "active");
+      setProgress(22, "سناریو", "تحلیل تصویری در پس‌زمینه ادامه دارد؛ خط اصلی هم‌اکنون سناریو، گویندگی و رندر را جلو می‌برد.");
+      log("⚡ محافظ خط تولید فعال شد: مرحله اطلاعات دیگر نمی‌تواند سناریو و رندر را متوقف کند.", "success");
+      stopped = true;
+      clearInterval(timer);
+    }
+  }, 250);
+  return () => { stopped = true; clearInterval(timer); };
+}
 
 function setStage(index, status = "active") {
   state.currentStage = index;
@@ -423,46 +443,6 @@ function updateVideoAnalysisUI() {
 }
 
 async function analyzeUploadedVideo(options = {}) {
-  // The manual "تحلیل ویدئو" button must not keep the UI hostage to the slow
-  // Gemini/File-API lane. The full analysis continues in the background; the
-  // caller receives the first useful result (or a non-blocking handoff) quickly.
-  if (state.videoAnalysisBusy) return state.videoAnalysis || null;
-  const corePromise = runVideoAnalysisCore(options);
-  if (!options?.fastReturn) return corePromise;
-  const scoutPromise = state.videoScoutPromise;
-  const scoutResultPromise = scoutPromise
-    ? scoutPromise.then(result => {
-        if (result?.analysis) {
-          state.videoAnalysis = result.analysis;
-          updateVideoAnalysisUI();
-          log(`⚡ اولین تحلیل تصویری سریع از ${result.provider || "AI"} آماده شد؛ Gemini بدون توقف در پس‌زمینه ادامه می‌دهد.`, "success");
-        }
-        return result;
-      }).catch(() => null)
-    : null;
-  const early = await Promise.race([
-    corePromise,
-    ...(scoutResultPromise ? [scoutResultPromise] : []),
-    wait(6500).then(() => ({
-      status: "background",
-      provider: "ai-conveyor",
-      degraded: true,
-      analysis: state.videoAnalysis || { summary: "", facts: [], scenes: [], script: "", providers: [] }
-    }))
-  ]);
-  if (early?.status === "background") {
-    // The heavier providers (usually Gemini) are still working past the 6.5s
-    // quick-return window. This used to leave the progress bar silently
-    // frozen at whatever percentage it last showed. Now we say clearly that
-    // it is still running, and the fix above guarantees the bar/log will
-    // show a real "تحلیل ویدئو تمام شد ✓" (or a real error) once the
-    // underlying analysis actually finishes, instead of just going silent.
-    log("⏳ تحلیل هنوز در پس‌زمینه ادامه دارد (Gemini کندتر از حد معمول است)؛ به‌محض تمام‌شدن، نتیجه همین‌جا به‌طور خودکار نمایش داده می‌شود.", "info");
-  }
-  return early;
-}
-
-async function runVideoAnalysisCore(options = {}) {
   const allowDegraded = Boolean(options?.allowDegraded);
   const video = state.assets.find(isVideoFile);
   if (!video || state.videoAnalysisBusy) return null;
@@ -471,18 +451,8 @@ async function runVideoAnalysisCore(options = {}) {
   // The video-analysis function may finish after the main conveyor has already
   // moved into script/voice/render. Once released, late AI results may enrich
   // state/logs, but they MUST NOT rewind the global stage or progress bar.
-  // These flags are declared before any background lane is kicked off because
-  // the fast scout may report progress almost immediately on mobile.
-  let pipelineReleased = false;
-  let lastFailure = null;
   const analysisProgress = (...args) => {
     if (!state.conveyorReleased && !pipelineReleased) setProgress(...args);
-  };
-  // Declare this before any Gemini/File-API lane can call it.
-  // Keeping it above the asynchronous branches prevents the browser
-  // temporal-dead-zone error: "Cannot access 'y' before initialization".
-  const analysisSetProgress = (...args) => {
-    if (!pipelineReleased && !state.conveyorReleased) analysisProgress(...args);
   };
   setStage(0);
   analysisProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود؛ در صورت خطای سرویس، OpenRouter Free خودکار فعال می‌شود…");
@@ -643,7 +613,7 @@ async function runVideoAnalysisCore(options = {}) {
     parallelScoutStarted = true;
     parallelScoutPromise = (async () => {
       const captured = await captureFastScoutFrames(video, 3);
-      log(`⚡ ${captured.frames.length} فریم سریع برای تحلیل تصویری آماده شد؛ Gemini، Groq و OpenRouter در پس‌زمینه ادامه می‌دهند.`, "info");
+      analysisProgress(66, "همکاری موازی AI", `Gemini، Groq و OpenRouter همزمان کار می‌کنند؛ ${captured.frames.length} فریم سریع برای تحلیل تصویری آماده شد…`);
       log("همکاری موازی فعال شد: Gemini + OpenRouter + Groq همزمان کار می‌کنند.", "info");
       const baseBody = {
         frames: captured.frames,
@@ -740,17 +710,6 @@ async function runVideoAnalysisCore(options = {}) {
       providerModels: payloads.map(x => x.model || "").filter(Boolean)
     };
   };
-
-  // Start the fast visual lane BEFORE any Gemini upload/File-API preparation.
-  // This is important on mobile: a large Gemini upload must never delay
-  // Groq/OpenRouter from receiving their keyframes.
-  const earlyScoutPromise = startParallelScouts().catch(error => {
-    lastFailure = error;
-    log(`⚠️ مسیر سریع Groq/OpenRouter آماده نشد؛ Gemini و خط تولید اصلی ادامه می‌دهند. ${String(error?.message || error)}`, "warning");
-    return null;
-  });
-  state.videoScoutPromise = earlyScoutPromise;
-
   try {
     const size = Number(video.size || 0);
     if (!size) throw new Error("حجم ویدئو معتبر نیست.");
@@ -776,7 +735,7 @@ async function runVideoAnalysisCore(options = {}) {
           method: "POST",
           body: form
         }, 180000);
-        analysisSetProgress(50, "ارسال ویدئو", "آپلود ویدئو به Gemini کامل شد.");
+        analysisProgress(50, "ارسال ویدئو", "آپلود ویدئو به Gemini کامل شد.");
         log("مرحله ۱: ویدئو کامل به Gemini ارسال و ثبت شد.", "success");
         fileName = fileInfo?.fileName || "";
         if (!fileName) throw new Error("Gemini فایل نهایی را ثبت نکرد.");
@@ -805,7 +764,7 @@ async function runVideoAnalysisCore(options = {}) {
         if (polls > 90) throw new Error("پردازش فایل در Gemini بیش از حد طول کشید. ویدئوی کوتاه‌تر یا کم‌حجم‌تر امتحان کن.");
       }
 
-      analysisSetProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
+      analysisProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده شد؛ تحلیل پس‌زمینه Gemini شروع می‌شود…");
       log("مرحله ۲: فایل آماده شد؛ تحلیل پس‌زمینه شروع می‌شود.", "success");
       formStart = {
         fileName: fileInfoCurrent.fileName || fileName,
@@ -818,11 +777,11 @@ async function runVideoAnalysisCore(options = {}) {
         platform: platformLabel(state.platform)
       };
     } else {
-      analysisSetProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده است؛ تحلیل مستقیم Gemini شروع می‌شود…");
+      analysisProgress(60, "شروع تحلیل هوشمند", "ویدئو آماده است؛ تحلیل مستقیم Gemini شروع می‌شود…");
       log("مرحله ۲: مسیر مستقیم ویدئو آماده شد؛ بدون URI فایل Gemini تحلیل شروع می‌شود.", "success");
     }
 
-    analysisSetProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی سریع و واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
+    analysisProgress(68, "تحلیل محتوای ویدئو", "Gemini در حال بررسی سریع و واقعی صحنه‌ها، نوشته‌های صفحه و قابلیت‌های نمایش‌داده‌شده است…");
     log("مرحله ۳: تحلیل واقعی ویدئو با Gemini Interactions و اجرای پس‌زمینه شروع شد.");
     const failedModels = new Set();
     const maxFallbacks = geminiPreparationFailed ? 0 : 2;
@@ -847,9 +806,15 @@ async function runVideoAnalysisCore(options = {}) {
 
     let resultPayload = null;
     let completed = false;
+    let lastFailure = null;
 
     // Once any valid AI result wins, the production conveyor owns the UI.
     // Slower Gemini polling must never write 68/74% back over the next stage.
+    let pipelineReleased = false;
+    const analysisSetProgress = (...args) => {
+      if (!pipelineReleased) analysisProgress(...args);
+    };
+
     // TRUE PARALLEL VIDEO ANALYSIS: Gemini, Groq and OpenRouter all enter
     // the same race. The first valid analysis unlocks the next stage.
     const pollGemini = async (started, activeModel = "") => {
@@ -913,7 +878,11 @@ async function runVideoAnalysisCore(options = {}) {
     // IMPORTANT: a rejected scout lane is NOT a production failure. The
     // browser must keep the conveyor moving even when Gemini, Groq or
     // OpenRouter is temporarily unavailable.
-    const scoutLane = earlyScoutPromise;
+    const scoutLane = startParallelScouts().catch(error => {
+      lastFailure = error;
+      log(`⚠️ مسیر تصویری Groq/OpenRouter شکست خورد؛ خط تولید متوقف نمی‌شود. ${String(error?.message || error)}`, "warning");
+      return null;
+    });
     const geminiLane = runGeminiLane().catch(error => {
       lastFailure = error;
       log(`⚠️ مسیر Gemini در این نوبت نتیجه نداد؛ AIهای دیگر و خط تولید ادامه می‌دهند. ${String(error?.message || error)}`, "warning");
@@ -983,25 +952,12 @@ async function runVideoAnalysisCore(options = {}) {
     // IMPORTANT: this function can finish late, after the main conveyor has
     // already moved to script/voice/render. In that case this is only a late
     // enrichment result. Never rewind the visible stage/progress back to 22%.
-    // BUT this "don't rewind" rule only makes sense when we are actually
-    // running INSIDE the automatic build pipeline (allowDegraded === true,
-    // which is only ever set by the automatic "ساخت تبلیغ حرفه‌ای" flow).
-    // For a standalone "تحلیل ویدئو" click there is no bigger pipeline running
-    // at all, so `pipelineReleased`/`state.conveyorReleased` being true here
-    // used to make the progress bar/stage freeze at 68% forever even after a
-    // fully successful analysis. Always show real completion in that case.
-    if (allowDegraded) {
-      if (!state.conveyorReleased && !pipelineReleased) {
-        setStage(0, "done");
-        setStage(1, "active");
-        analysisProgress(22, "سناریو", "تحلیل ویدئو کامل شد؛ سناریو وارد مرحله تولید شد.");
-      } else {
-        log("🤝 نتیجه دیررس تحلیل ویدئو دریافت شد؛ فقط برای غنی‌سازی استفاده شد و خط تولید به عقب برنگشت.", "success");
-      }
-    } else {
+    if (!state.conveyorReleased && !pipelineReleased) {
       setStage(0, "done");
-      setProgress(100, "تحلیل ویدئو تمام شد ✓", "تحلیل با موفقیت کامل شد؛ خلاصه، سناریو و توضیحات ویدئو آماده‌اند.");
-      log("✅ تحلیل ویدئو با موفقیت تمام شد؛ نتیجه در بخش «سناریوی تبلیغ» قابل مشاهده است.", "success");
+      setStage(1, "active");
+      analysisProgress(22, "سناریو", "تحلیل ویدئو کامل شد؛ سناریو وارد مرحله تولید شد.");
+    } else {
+      log("🤝 نتیجه دیررس تحلیل ویدئو دریافت شد؛ فقط برای غنی‌سازی استفاده شد و خط تولید به عقب برنگشت.", "success");
     }
     return result;
   } catch (e) {
@@ -1065,10 +1021,8 @@ $("#files").onchange = e => {
 };
 
 $("#videoAnalysisBtn").onclick = async () => {
-  if (state.busy || state.videoAnalysisBusy) return;
-  try {
-    await analyzeUploadedVideo({ fastReturn: true });
-  } catch (_) {}
+  if (state.busy) return;
+  try { await analyzeUploadedVideo(); } catch (_) {}
 };
 $("#music").onchange = e => { const f = e.target.files[0]; $("#musicName").textContent = f ? f.name : "اختیاری"; };
 $("#lang").onchange = e => { state.language = e.target.value; setDir(); $("#brand").placeholder = t("brandPlaceholder"); $("#desc").placeholder = t("descPlaceholder"); };
@@ -1196,7 +1150,9 @@ $("#scriptBtn").onclick = async () => {
   $("#log").innerHTML = ""; $("#stage").innerHTML = `<div class="processing"><div class="spinner"></div><strong>در حال آماده‌سازی پروژه...</strong><small>این صفحه در طول کار وضعیت واقعی هر مرحله را نشان می‌دهد.</small></div>`;
   $("#overallState").textContent = "● در حال تولید";
 
+  let stopConveyorWatchdog = () => {};
   try {
+    stopConveyorWatchdog = startConveyorWatchdog();
     setStage(0); setProgress(8, "اطلاعات", t("analyze")); log(`شروع پروژه «${brand}» با ${state.assets.length} رسانه.`); await wait(250);
     if (state.assets.length) log(t("mediaReady"), "success"); else log(t("noMedia"));
 
@@ -1236,9 +1192,7 @@ $("#scriptBtn").onclick = async () => {
       state.backgroundVideoAnalysisPromise = analysisPromise;
       videoAnalysis = await Promise.race([
         analysisPromise,
-        // Hard UI handoff: video understanding is a background worker.
-        // Never let frame extraction/Gemini polling hold stage 1 hostage.
-        wait(1200).then(() => null)
+        wait(2500).then(() => null)
       ]);
       if (videoAnalysis && !videoAnalysis.degraded) {
         state.conveyorReleased = true;
@@ -1263,11 +1217,9 @@ $("#scriptBtn").onclick = async () => {
       log("حالت ساخت سریع فعال است؛ تحلیل عمیق ویدئو برای کاهش زمان انتظار رد شد.", "info");
     }
     // Stage 01 is now genuinely complete before stage 02 becomes active.
-    // From this point the global UI belongs exclusively to the conveyor.
     state.conveyorReleased = true;
-    try { pipelineReleased = true; } catch (_) {}
     setStage(0, "done");
-    setStage(1); setProgress(22, "سناریو", state.scriptMode === "manual" ? "سناریوی اختصاصی تو آماده می‌شود." : state.scriptMode === "hybrid" ? "AI سناریوی تو را حرفه‌ای‌تر و منسجم‌تر می‌کند؛ تحویل حداکثر ۱.۸ ثانیه." : "سناریو با تحویل سریع AI ساخته می‌شود؛ AIهای دیگر همزمان در پس‌زمینه کار می‌کنند.");
+    setStage(1); setProgress(22, "سناریو", state.scriptMode === "manual" ? "سناریوی اختصاصی تو آماده می‌شود." : state.scriptMode === "hybrid" ? "AI سناریوی تو را حرفه‌ای‌تر و منسجم‌تر می‌کند؛ تحویل حداکثر ۸۰۰ms." : "سناریو با تحویل سریع AI ساخته می‌شود؛ AIهای دیگر همزمان در پس‌زمینه کار می‌کنند.");
     let j;
     let productionPlanPromise = null;
     if (state.scriptMode === "manual") {
@@ -1294,7 +1246,7 @@ $("#scriptBtn").onclick = async () => {
 
       let contextualPoolPromise = null;
       try {
-        log("🚀 AI CONVEYOR: Gemini + Groq + OpenRouter + AI Work Pool همزمان ادامه دارند؛ مرحله سناریو حداکثر ۱.۸ ثانیه گیت دارد.", "info");
+        log("🚀 AI CONVEYOR: Gemini + Groq + OpenRouter + AI Work Pool همزمان ادامه دارند؛ مرحله سناریو حداکثر ۸۰۰ms گیت دارد.", "info");
         contextualPoolPromise = api("/api/ai/work-pool", {
           brand, description: desc, customScript: state.scriptMode === "hybrid" ? customScript : "",
           scriptMode: state.scriptMode, language: state.language, duration: state.duration,
@@ -1317,14 +1269,14 @@ $("#scriptBtn").onclick = async () => {
           const handoff = await Promise.race([
             contextualPoolPromise,
             earlyScriptPoolPromise || Promise.resolve(null),
-            wait(1800).then(() => ({ __handoffTimeout: true }))
+            wait(800).then(() => ({ __handoffTimeout: true }))
           ]);
           if (handoff?.script) {
             j = { script: String(handoff.script).trim(), fallback: false, provider: handoff.provider || "ai-work-pool" };
             log(`⚡ سناریوی AI تحویل شد؛ ${Array.isArray(handoff.providers) ? handoff.providers.length : 1} موتور درگیر بودند.`, "success");
           } else {
             j = { script: fallbackScript(brand, desc), fallback: true, provider: "verified-draft" };
-            log("⚡ تایمر ۱.۸ ثانیه فعال شد؛ سناریوی تأییدشده وارد گویندگی شد و AIهای کندتر بدون توقف ادامه می‌دهند.", "info");
+            log("⚡ تایمر ۸۰۰ms فعال شد؛ سناریوی تأییدشده وارد گویندگی شد و AIهای کندتر بدون توقف ادامه می‌دهند.", "info");
           }
         }
       } catch (poolError) {
@@ -1381,39 +1333,23 @@ $("#scriptBtn").onclick = async () => {
     }
     setStage(2, "done"); setProgress(52, "گویندگی آماده", t("voiceReady")); log(t("voiceReady"), "success");
 
-    setStage(3); setProgress(55, "صحنه‌ها", "رسانه‌ها و سناریو آماده‌اند؛ رندر بدون انتظار برای AIهای کندتر شروع می‌شود...");
-    // IMPORTANT: productionPlanPromise is deliberately NOT awaited. It continues
-    // in the background while the browser starts rendering immediately. Any late
-    // plan is useful for logging/QA but must never block the final video.
-    if (state.aiProductionPlan?.scenes?.length) {
-      log(`برنامه مشترک AI برای ${state.aiProductionPlan.scenes.length} صحنه زودتر آماده شد.`, "success");
+    setStage(3); setProgress(55, "صحنه‌ها", "رسانه‌ها، متن و رنگ برند برای ویدئو چیده می‌شوند..."); log("مرحله صحنه‌ها شروع شد؛ نتیجه AIهای همکار در صورت آماده‌بودن ادغام می‌شود.");
+    if (productionPlanPromise) await Promise.race([productionPlanPromise, wait(800)]);
+    if (state.aiProductionPlan?.scenes?.length) log(`برنامه مشترک AI برای ${state.aiProductionPlan.scenes.length} صحنه آماده شد و در رندر استفاده می‌شود.`, "success");
+    await wait(350); setStage(3, "done");
+    setProgress(62, "صحنه‌ها آماده", "سناریو، گویندگی و صحنه‌بندی کامل شد؛ آماده رندر نهایی.");
+    // This is the only gate for the final button: a real script + real audio.
+    // Always explicitly unlock it here, even if an earlier analysis stage updated
+    // the UI after the button state was changed.
+    if (state.script && state.voiceBlob?.size) {
+      $("#renderBtn").disabled = false;
+      state.generated = true;
+      $("#overallState").textContent = "● آماده رندر با صدا";
+      log("پروژه برای رندر نهایی آماده است؛ دکمه «ساخت ویدئو» فعال شد.", "success");
     } else {
-      log("⚡ برنامه‌ریزی AI هنوز در پس‌زمینه است؛ رندر با اطلاعات آماده همین حالا شروع می‌شود.", "info");
-    }
-    setStage(3, "done");
-    setProgress(64, "رندر خودکار", "گویندگی آماده شد؛ ساخت ویدئو بدون کلیک و بدون انتظار برای AIهای باقی‌مانده شروع می‌شود.");
-    if (!state.script || !state.voiceBlob?.size) {
       throw new Error("سناریو یا فایل گویندگی برای رندر نهایی آماده نیست.");
     }
-    state.generated = true;
-    await runRenderPipeline(true);
-  } catch (buildError) {
-    // CRITICAL FIX: this whole automatic pipeline previously had no top-level
-    // catch. Any unexpected error (a bad DOM reference, a rendering/codec
-    // failure, a rejected promise that slipped through) used to die silently:
-    // the progress bar and stage grid stayed frozen on whatever they last
-    // showed (often "تحلیل موازی محتوا" at 68%), busy still got reset to false
-    // in `finally`, and the user saw no error at all — just a stuck screen.
-    // Now every failure is surfaced, logged, and the UI is put in a clear
-    // "error" state so the user (and we) can see exactly what broke.
-    const detail = String(buildError?.message || buildError || "خطای ناشناخته در خط تولید.");
-    log(`❌ خط تولید متوقف شد: ${detail}`, "error");
-    setStage(state.currentStage ?? 0, "error");
-    setProgress(Math.max(0, Number($("#progressPercent")?.textContent) || 0), "متوقف شد", detail);
-    $("#overallState").textContent = "● خطا";
-    $("#renderBtn").disabled = true;
-    state.generated = false;
-  } finally { state.busy = false; $("#scriptBtn").disabled = false; }
+  } finally { stopConveyorWatchdog(); state.busy = false; $("#scriptBtn").disabled = false; }
 };
 
 async function getVoice() {
@@ -1557,14 +1493,11 @@ function audioBufferToWav(buffer) {
   return new Blob([out], { type: "audio/wav" });
 }
 
-async function runRenderPipeline(auto = false) {
-  if (!state.script || !state.voiceBlob?.size) throw new Error("سناریو یا فایل گویندگی برای رندر نهایی آماده نیست.");
-  const wasBusy = state.busy;
-  if (!wasBusy) state.busy = true;
-  $("#renderBtn").disabled = true; $("#downloadBtn").disabled = true; $("#resultActions").hidden = true;
+$("#renderBtn").onclick = async () => {
+  if (!state.script || state.busy) return;
+  state.busy = true; $("#renderBtn").disabled = true; $("#downloadBtn").disabled = true; $("#resultActions").hidden = true;
   try {
-    setStage(4); setProgress(66, "رندر ویدئو", auto ? "رندر خودکار شروع شد؛ AIهای دیگر همزمان در پس‌زمینه کار می‌کنند..." : t("render"));
-    log(auto ? "🚀 رندر خودکار بلافاصله بعد از گویندگی شروع شد؛ هیچ مرحله AI دیگری منتظر رندر نیست." : "رندر فریم‌ها شروع شد.", "success");
+    setStage(4); setProgress(66, "رندر ویدئو", t("render")); log("رندر فریم‌ها شروع شد.");
     state.lastVideo = await renderVideo(state.voiceBlob);
     await saveVideoToLibrary(state.lastVideo, { brand: brandText(), platform: state.platform, language: state.language, duration: Math.round(state.duration) }).catch(e => log(`ذخیره در کتابخانه انجام نشد: ${e.message || e}`, "info"));
     await renderVideoLibrary();
@@ -1574,22 +1507,15 @@ async function runRenderPipeline(auto = false) {
     preview.src = previewUrl;
     preview.load();
     preview.addEventListener("error", () => log("مرورگر نتوانست فایل ویدئوی نهایی را پخش کند. فایل را دانلود و با VLC یا پخش‌کننده دیگری باز کن.", "error"), { once: true });
-    setStage(4, "done"); setStage(5, "done"); setProgress(100, t("done"), "ویدئوی نهایی آماده است؛ می‌توانی همین‌جا ببینی یا دانلود کنی."); $("#outputState").textContent = "✓ آماده دانلود"; $("#downloadBtn").disabled = false; $("#resultActions").hidden = false; $("#overallState").textContent = "● آماده"; log("🎉 ویدئوی نهایی با موفقیت ساخته شد و پیش‌نمایش آماده است.", "success");
+    // Do not force autoplay on mobile; the user can press play safely.
+    setStage(4, "done"); setStage(5, "done"); setProgress(100, t("done"), "ویدئوی نهایی آماده است؛ می‌توانی همین‌جا ببینی یا دانلود کنی."); $("#outputState").textContent = "✓ آماده دانلود"; $("#downloadBtn").disabled = false; $("#resultActions").hidden = false; log("ویدئوی نهایی با موفقیت ساخته شد و پیش‌نمایش آماده است.", "success");
   } catch (e) {
     const message = friendlyRenderError(e);
     $("#overallState").textContent = "● خطا";
     setProgress(0, "ساخت ناموفق بود", message);
     log(`رندر ناموفق بود: ${message}`, "error");
-    throw e;
-  } finally {
-    if (!wasBusy) state.busy = false;
-    $("#renderBtn").disabled = false;
   }
-}
-
-$("#renderBtn").onclick = async () => {
-  if (!state.script || state.busy) return;
-  try { await runRenderPipeline(false); } catch (_) {}
+  finally { state.busy = false; $("#renderBtn").disabled = false; }
 };
 
 $("#downloadBtn").onclick = () => {
