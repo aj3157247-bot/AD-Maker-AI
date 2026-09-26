@@ -199,6 +199,10 @@ function renderShell() {
 renderShell();
 
 function setProgress(percent, title, text) {
+  // Stage 01 is a hand-off stage only. Once the conveyor has released, late
+  // video-analysis callbacks are forbidden from taking the visible pipeline
+  // backwards or showing 68/74/92% while script/voice/render is running.
+  if (state.conveyorReleased && state.currentStage === 0 && Number(percent) > 18) return;
   $("#bar").style.width = `${Math.max(0, Math.min(100, percent))}%`;
   $("#progressPercent").textContent = `${Math.round(percent)}%`;
   $("#progressTitle").textContent = title;
@@ -222,7 +226,7 @@ function startConveyorWatchdog() {
     if (stopped || !state.busy) return;
     // The visual-analysis lane is background work. It is never allowed to
     // leave the main conveyor visually parked on stage 01.
-    if (state.currentStage === 0 && Date.now() - startedAt >= 1800) {
+    if (state.currentStage === 0 && Date.now() - startedAt >= 900) {
       state.conveyorReleased = true;
       setStage(0, "done");
       setStage(1, "active");
@@ -942,7 +946,12 @@ async function analyzeUploadedVideo(options = {}) {
     if (coordinatedResult?.coordinated) {
       log(`هماهنگی AI کامل شد: ${coordinatedResult.providers.length} موتور در زمینه مشترک استفاده شدند (${coordinatedResult.providers.join(" + ")}).`, "success");
     }
-    analysisProgress(92, "هماهنگی AI", "نتایج AIها در یک زمینه مشترک جمع شد؛ سناریو از اطلاعات تأییدشده ساخته می‌شود…");
+    // HARD UI OWNERSHIP: from the moment a visual-AI result is handed off,
+    // this function is background work only. It must NEVER write 92% (or any
+    // other progress value) because the main conveyor owns the visible stages.
+    if (!state.conveyorReleased) {
+      analysisProgress(18, "تحویل تحلیل", "نتیجه تحلیل آماده شد؛ خط تولید اصلی وارد مرحله سناریو می‌شود…");
+    }
     const result = coordinatedResult || resultPayload.analysis;
     try { Object.defineProperty(result, "_lateEnrichmentPromise", { value: lateEnrichmentPromise, enumerable: false, configurable: true }); } catch (_) {}
 
@@ -1209,7 +1218,7 @@ $("#scriptBtn").onclick = async () => {
       state.backgroundVideoAnalysisPromise = analysisPromise;
       videoAnalysis = await Promise.race([
         analysisPromise,
-        wait(2500).then(() => null)
+        wait(1000).then(() => null)
       ]);
       if (videoAnalysis && !videoAnalysis.degraded) {
         state.conveyorReleased = true;
