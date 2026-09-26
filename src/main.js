@@ -1363,14 +1363,16 @@ $("#scriptBtn").onclick = async () => {
     if (state.aiProductionPlan?.scenes?.length) log(`برنامه مشترک AI برای ${state.aiProductionPlan.scenes.length} صحنه آماده شد و در رندر استفاده می‌شود.`, "success");
     await wait(350); setStage(3, "done");
     setProgress(62, "صحنه‌ها آماده", "سناریو، گویندگی و صحنه‌بندی کامل شد؛ آماده رندر نهایی.");
-    // This is the only gate for the final button: a real script + real audio.
-    // Always explicitly unlock it here, even if an earlier analysis stage updated
-    // the UI after the button state was changed.
+    // FINAL HANDOFF: rendering is now part of the same one-click conveyor.
+    // Previous versions only enabled the render button here, so the pipeline could
+    // finish scripting/TTS yet never produce a video unless the user noticed and
+    // pressed a second button. That was a real end-to-end failure.
     if (state.script && state.voiceBlob?.size) {
       $("#renderBtn").disabled = false;
       state.generated = true;
-      $("#overallState").textContent = "● آماده رندر با صدا";
-      log("پروژه برای رندر نهایی آماده است؛ دکمه «ساخت ویدئو» فعال شد.", "success");
+      $("#overallState").textContent = "● رندر خودکار شروع شد";
+      log("✓ سناریو و گویندگی آماده‌اند؛ رندر نهایی بدون کلیک دوم شروع می‌شود.", "success");
+      await performRender(true);
     } else {
       throw new Error("سناریو یا فایل گویندگی برای رندر نهایی آماده نیست.");
     }
@@ -1518,8 +1520,9 @@ function audioBufferToWav(buffer) {
   return new Blob([out], { type: "audio/wav" });
 }
 
-$("#renderBtn").onclick = async () => {
-  if (!state.script || state.busy) return;
+async function performRender(fromConveyor = false) {
+  if (!state.script || (!fromConveyor && state.busy)) return;
+  const previousBusy = state.busy;
   state.busy = true; $("#renderBtn").disabled = true; $("#downloadBtn").disabled = true; $("#resultActions").hidden = true;
   try {
     setStage(4); setProgress(66, "رندر ویدئو", t("render")); log("رندر فریم‌ها شروع شد.");
@@ -1540,7 +1543,11 @@ $("#renderBtn").onclick = async () => {
     setProgress(0, "ساخت ناموفق بود", message);
     log(`رندر ناموفق بود: ${message}`, "error");
   }
-  finally { state.busy = false; $("#renderBtn").disabled = false; }
+  finally { state.busy = previousBusy; $("#renderBtn").disabled = false; }
+}
+
+$("#renderBtn").onclick = async () => {
+  await performRender(false);
 };
 
 $("#downloadBtn").onclick = () => {
