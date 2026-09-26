@@ -451,7 +451,13 @@ async function analyzeUploadedVideo(options = {}) {
     }))
   ]);
   if (early?.status === "background") {
-    log("⚡ تحلیل سریع تحویل شد؛ Gemini و AIهای تصویری دیگر بدون مسدودکردن صفحه در پس‌زمینه ادامه می‌دهند.", "success");
+    // The heavier providers (usually Gemini) are still working past the 6.5s
+    // quick-return window. This used to leave the progress bar silently
+    // frozen at whatever percentage it last showed. Now we say clearly that
+    // it is still running, and the fix above guarantees the bar/log will
+    // show a real "تحلیل ویدئو تمام شد ✓" (or a real error) once the
+    // underlying analysis actually finishes, instead of just going silent.
+    log("⏳ تحلیل هنوز در پس‌زمینه ادامه دارد (Gemini کندتر از حد معمول است)؛ به‌محض تمام‌شدن، نتیجه همین‌جا به‌طور خودکار نمایش داده می‌شود.", "info");
   }
   return early;
 }
@@ -977,12 +983,25 @@ async function runVideoAnalysisCore(options = {}) {
     // IMPORTANT: this function can finish late, after the main conveyor has
     // already moved to script/voice/render. In that case this is only a late
     // enrichment result. Never rewind the visible stage/progress back to 22%.
-    if (!state.conveyorReleased && !pipelineReleased) {
-      setStage(0, "done");
-      setStage(1, "active");
-      analysisProgress(22, "سناریو", "تحلیل ویدئو کامل شد؛ سناریو وارد مرحله تولید شد.");
+    // BUT this "don't rewind" rule only makes sense when we are actually
+    // running INSIDE the automatic build pipeline (allowDegraded === true,
+    // which is only ever set by the automatic "ساخت تبلیغ حرفه‌ای" flow).
+    // For a standalone "تحلیل ویدئو" click there is no bigger pipeline running
+    // at all, so `pipelineReleased`/`state.conveyorReleased` being true here
+    // used to make the progress bar/stage freeze at 68% forever even after a
+    // fully successful analysis. Always show real completion in that case.
+    if (allowDegraded) {
+      if (!state.conveyorReleased && !pipelineReleased) {
+        setStage(0, "done");
+        setStage(1, "active");
+        analysisProgress(22, "سناریو", "تحلیل ویدئو کامل شد؛ سناریو وارد مرحله تولید شد.");
+      } else {
+        log("🤝 نتیجه دیررس تحلیل ویدئو دریافت شد؛ فقط برای غنی‌سازی استفاده شد و خط تولید به عقب برنگشت.", "success");
+      }
     } else {
-      log("🤝 نتیجه دیررس تحلیل ویدئو دریافت شد؛ فقط برای غنی‌سازی استفاده شد و خط تولید به عقب برنگشت.", "success");
+      setStage(0, "done");
+      setProgress(100, "تحلیل ویدئو تمام شد ✓", "تحلیل با موفقیت کامل شد؛ خلاصه، سناریو و توضیحات ویدئو آماده‌اند.");
+      log("✅ تحلیل ویدئو با موفقیت تمام شد؛ نتیجه در بخش «سناریوی تبلیغ» قابل مشاهده است.", "success");
     }
     return result;
   } catch (e) {
