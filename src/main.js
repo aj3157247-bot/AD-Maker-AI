@@ -466,11 +466,15 @@ async function analyzeUploadedVideo(options = {}) {
   // The video-analysis function may finish after the main conveyor has already
   // moved into script/voice/render. Once released, late AI results may enrich
   // state/logs, but they MUST NOT rewind the global stage or progress bar.
-  const analysisProgress = (...args) => {
-    if (!state.conveyorReleased) setProgress(...args);
+  // HARD OWNERSHIP RULE: video analysis is a background worker. It must NEVER
+  // own the global production progress/stages. The main script pipeline is the
+  // only writer of setProgress()/setStage() while a project is being built.
+  // Keep analysis telemetry in the dedicated video-analysis UI only.
+  const analysisProgress = (percent, title, text) => {
+    const status = $("#videoAnalysisStatus");
+    if (status) status.textContent = `${title || "تحلیل ویدئو"} · ${Math.round(Number(percent) || 0)}٪ — ${text || ""}`;
   };
-  setStage(0);
-  analysisProgress(8, "آماده‌سازی تحلیل", "ویدئوی معرفی برای Gemini آماده می‌شود؛ در صورت خطای سرویس، OpenRouter Free خودکار فعال می‌شود…");
+  analysisProgress(8, "آماده‌سازی تحلیل", "تحلیل تصویری در پس‌زمینه شروع شد؛ خط تولید اصلی مستقل ادامه دارد.");
   log("تحلیل هوشمند ویدئوی معرفی شروع شد.", "info");
 
   const requestJson = async (url, options = {}, timeoutMs = 45000) => {
@@ -949,9 +953,7 @@ async function analyzeUploadedVideo(options = {}) {
     // HARD UI OWNERSHIP: from the moment a visual-AI result is handed off,
     // this function is background work only. It must NEVER write 92% (or any
     // other progress value) because the main conveyor owns the visible stages.
-    if (!state.conveyorReleased) {
-      analysisProgress(18, "تحویل تحلیل", "نتیجه تحلیل آماده شد؛ خط تولید اصلی وارد مرحله سناریو می‌شود…");
-    }
+    // No global progress/stage writes here. The main conveyor owns the hand-off.
     const result = coordinatedResult || resultPayload.analysis;
     try { Object.defineProperty(result, "_lateEnrichmentPromise", { value: lateEnrichmentPromise, enumerable: false, configurable: true }); } catch (_) {}
 
@@ -972,13 +974,9 @@ async function analyzeUploadedVideo(options = {}) {
     // IMPORTANT: this function can finish late, after the main conveyor has
     // already moved to script/voice/render. In that case this is only a late
     // enrichment result. Never rewind the visible stage/progress back to 22%.
-    if (!state.conveyorReleased && !pipelineReleased) {
-      setStage(0, "done");
-      setStage(1, "active");
-      analysisProgress(22, "سناریو", "تحلیل ویدئو کامل شد؛ سناریو وارد مرحله تولید شد.");
-    } else {
-      log("🤝 نتیجه دیررس تحلیل ویدئو دریافت شد؛ فقط برای غنی‌سازی استفاده شد و خط تولید به عقب برنگشت.", "success");
-    }
+    // Analysis completion is data-only. The main conveyor advances stages.
+    // This prevents a fast/late analysis promise from leaving the UI on stage 01.
+    log("🤝 نتیجه تحلیل ویدئو دریافت شد؛ خط تولید اصلی کنترل مرحله را در اختیار دارد.", "success");
     return result;
   } catch (e) {
     const detail = String(e?.message || e);
@@ -1002,8 +1000,9 @@ async function analyzeUploadedVideo(options = {}) {
       log(`⚡ تحلیل پس‌زمینه بعد از تحویل خط تولید با خطا تمام شد؛ نتیجه اصلی تولید بدون توقف ادامه می‌یابد. ${detail}`, "warning");
       return state.videoAnalysis;
     }
-    setStage(0, "error");
-    analysisProgress(68, "تحلیل متوقف شد", detail.includes("سهمیه روزانه") || detail.includes("daily quota")
+    // Manual analysis errors are reported in the dedicated analysis status/log.
+    // Never mark the global production stage as failed from a background worker.
+    analysisProgress(0, "تحلیل متوقف شد", detail.includes("سهمیه روزانه") || detail.includes("daily quota")
       ? "سهمیه روزانه Gemini تمام شده است؛ بعد از بازنشانی سهمیه دوباره تلاش کن."
       : detail);
     log(`تحلیل ویدئو انجام نشد: ${detail}`, "error");
