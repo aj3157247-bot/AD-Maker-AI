@@ -30,7 +30,7 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 
 const copy = {
   fa: {
-    dir: "rtl", langName: "دری افغانستان", brandPlaceholder: "مثلاً بازارک",
+    dir: "rtl", langName: "فارسی", brandPlaceholder: "مثلاً بازارک",
     descPlaceholder: "محصول، خدمات، سایت یا اپلیکیشن را توضیح بده. چه مشکلی را حل می‌کند و مهم‌ترین مزیت آن چیست؟",
     ready: "آماده برای ساخت", analyze: "در حال تحلیل اطلاعات و رسانه‌ها...", script: "در حال نوشتن سناریوی تبلیغاتی...",
     voice: "در حال ساخت گویندگی حرفه‌ای...", render: "در حال ساخت و رندر ویدئو...", done: "تبلیغ شما آماده است 🎉",
@@ -100,21 +100,28 @@ function renderShell() {
         <div class="hero-art" aria-hidden="true"><div class="hero-phone"><div class="hero-phone-top"></div><div class="hero-play">▶</div><div class="hero-lines"><i></i><i></i><i></i></div></div><div class="glow g1"></div><div class="glow g2"></div></div>
       </section>
 
-      <section class="mobile-workspace">
+      <nav class="workspace-nav" aria-label="بخش‌های AD Maker AI">
+        <button type="button" class="workspace-nav-item active" data-focus="studio"><span>🎬</span><b>استودیو</b><small>ساخت تبلیغ</small></button>
+        <button type="button" class="workspace-nav-item" data-focus="analysis"><span>🔍</span><b>تحلیل ویدئو</b><small>تحلیل با AI</small></button>
+        <button type="button" class="workspace-nav-item" data-focus="script"><span>✦</span><b>سناریو + نام</b><small>ساخت با AI</small></button>
+        <button type="button" class="workspace-nav-item" data-focus="library"><span>▣</span><b>کتابخانه</b><small>ویدئوهای ساخته‌شده</small></button>
+      </nav>
+
+      <section class="mobile-workspace focus-studio">
         <section class="setup card">
           <div class="section-head"><div><small>مرحله ۱</small><h2>اطلاعات تبلیغ</h2></div><span class="step-state">شروع سریع</span></div>
 
-          <div class="field"><label>نام برند یا محصول <b>*</b></label><input id="brand" class="input" placeholder="مثلاً: بازارک"></div>
-          <div class="field"><label>درباره محصول یا خدمات <b>*</b></label><textarea id="desc" placeholder="چه چیزی می‌فروشی یا چه خدمتی ارائه می‌کنی؟ مزیت اصلی، مخاطب و راه ارتباطی را بنویس..."></textarea><div class="hint">اگر توضیحات کوتاه باشد، AI آن را متناسب با زمان ویدئو حرفه‌ای‌تر می‌کند.</div></div>
+          <div class="field focus-core"><label>نام برند یا محصول <b>*</b></label><input id="brand" class="input" placeholder="مثلاً: بازارک"></div>
+          <div class="field focus-core"><label>درباره محصول یا خدمات <b>*</b></label><textarea id="desc" placeholder="چه چیزی می‌فروشی یا چه خدمتی ارائه می‌کنی؟ مزیت اصلی، مخاطب و راه ارتباطی را بنویس..."></textarea><div class="hint">اگر توضیحات کوتاه باشد، AI آن را متناسب با زمان ویدئو حرفه‌ای‌تر می‌کند.</div></div>
 
-          <div class="quick-grid">
+          <div class="quick-grid focus-core">
             <div class="field"><label>زبان تبلیغ</label><select id="lang">
               <option value="en">English</option><option value="ar">العربية</option><option value="tr">Türkçe</option><option value="ur">اردو</option><option value="hi">हिन्दी</option><option value="fa">فارسی</option><option value="ps">پښتو</option><option value="ru">Русский</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="id">Bahasa Indonesia</option><option value="uz">O‘zbekcha</option>
             </select></div>
             <div class="field"><label>مدت</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select></div>
           </div>
 
-          <div class="field creation-mode-field">
+          <div class="field creation-mode-field focus-script">
             <div class="creation-mode-head"><label>حالت ساخت تبلیغ</label><span id="selectedBuildMode">حرفه‌ای · تحلیل + AI</span></div>
             <div class="creation-mode-grid">
               <button type="button" class="creation-mode active" data-build-mode="pro">
@@ -137,7 +144,7 @@ function renderShell() {
             <div id="customScriptWrap" class="custom-script-wrap" hidden><textarea id="customScript" placeholder="سناریوی خودت را اینجا بنویس..."></textarea><small>متن تو حفظ می‌شود؛ در حالت همکاری، AI آن را منسجم‌تر و متناسب با زمان و پلتفرم می‌کند.</small></div>
           </div>
 
-          <div class="field"><div class="platform-title"><label>پلتفرم تبلیغ</label><span id="selectedPlatform">YouTube Shorts · 9:16</span></div><div class="style-grid platform-grid">
+          <div class="field focus-studio-only"><div class="platform-title"><label>پلتفرم تبلیغ</label><span id="selectedPlatform">YouTube Shorts · 9:16</span></div><div class="style-grid platform-grid">
             <button type="button" class="style-chip active" data-style="youtube_short"><i>▶</i><span>YouTube Shorts</span></button>
             <button type="button" class="style-chip" data-style="youtube"><i>▶</i><span>YouTube</span></button>
             <button type="button" class="style-chip" data-style="tiktok"><i>♪</i><span>TikTok</span></button>
@@ -148,17 +155,17 @@ function renderShell() {
             <button type="button" class="style-chip" data-style="whatsapp"><i>◌</i><span>WhatsApp</span></button>
           </div></div>
 
-          <div class="field media-field"><div class="field-title"><label>رسانه‌های تبلیغ</label><span>هر تعداد</span></div><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>برای بهترین نتیجه، همه تصاویر و کلیپ‌های محصولت را انتخاب کن.</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div><div id="videoAnalysisBox" class="video-analysis-box" hidden><div><strong>🎬 تحلیل هوشمند ویدئو</strong><small id="videoAnalysisStatus">ویدئوی معرفی سایت را تحلیل می‌کند و سناریو را دقیقاً بر اساس بخش‌های دیده‌شده می‌سازد.</small></div><button id="videoAnalysisBtn" class="secondary" type="button">تحلیل ویدئو</button></div></div>
+          <div class="field media-field focus-analysis"><div class="field-title"><label>رسانه‌های تبلیغ</label><span>هر تعداد</span></div><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>برای بهترین نتیجه، همه تصاویر و کلیپ‌های محصولت را انتخاب کن.</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div><div id="videoAnalysisBox" class="video-analysis-box" hidden><div><strong>🎬 تحلیل هوشمند ویدئو</strong><small id="videoAnalysisStatus">ویدئوی معرفی سایت را تحلیل می‌کند و سناریو را دقیقاً بر اساس بخش‌های دیده‌شده می‌سازد.</small></div><button id="videoAnalysisBtn" class="secondary" type="button">تحلیل ویدئو</button></div></div>
 
-          <div class="compact-options">
+          <div class="compact-options focus-studio-only">
             <label class="music-drop"><input id="music" type="file" accept="audio/*"><span>♫</span><div><strong>موسیقی پس‌زمینه</strong><small id="musicName">اختیاری</small></div></label>
             <div class="color-row"><input id="brandColor" type="color" value="#7c5cff" aria-label="رنگ برند"><span id="colorHex">#7C5CFF</span></div>
           </div>
 
-          <div class="button-row"><button id="scriptBtn" class="primary big">✦ ساخت سناریوی هوشمند</button><button id="demoBtn" class="secondary demo-btn">نمونه</button></div>
+          <div class="button-row focus-core"><button id="scriptBtn" class="primary big">✦ ساخت سناریوی هوشمند</button><button id="demoBtn" class="secondary demo-btn">نمونه</button></div>
         </section>
 
-        <section class="production card">
+        <section class="production card focus-studio-only">
           <div class="section-head"><div><small>مرحله ۲</small><h2>ساخت خودکار</h2></div><span id="overallState" class="state-dot">● آماده</span></div>
           <div class="progress-card">
             <div class="progress-top"><div><strong id="progressTitle">آماده شروع</strong><small id="progressText">اطلاعات را وارد کن و ساخت را شروع کن.</small></div><b id="progressPercent">0%</b></div>
@@ -171,7 +178,7 @@ function renderShell() {
           <details class="ops-details"><summary><span>جزئیات عملیات</span><em>نمایش</em></summary><div class="live-log"><div class="log-head"><span>وضعیت ساخت</span><button id="clearLog" class="tiny-btn">پاک کردن</button></div><div id="log" class="log"><div class="log-line muted"><span>●</span> منتظر شروع پروژه...</div></div></div></details>
         </section>
 
-        <section class="view-switch card">
+        <section class="view-switch card focus-studio-only">
           <div class="section-head"><div><small>دسته‌ها</small><h2>بخش کاری</h2></div><span id="viewState">استودیو</span></div>
           <div class="view-tabs">
             <button type="button" class="view-tab active" data-view="preview"><span>🎬</span><b>استودیو و پیش‌نمایش</b><small>ساخت، مشاهده و دانلود</small></button>
@@ -180,7 +187,7 @@ function renderShell() {
           <div class="view-hint">از «دسته‌ها» بخش موردنظر را انتخاب کن؛ هر بار فقط همان بخش نمایش داده می‌شود.</div>
         </section>
 
-        <section class="result card workspace-panel" data-workspace="preview">
+        <section class="result card workspace-panel focus-studio-only" data-workspace="preview">
           <div class="section-head"><div><small>مرحله ۳</small><h2>پیش‌نمایش و خروجی</h2></div><span id="outputState">آماده ساخت</span></div>
           <div id="stage" class="video-stage"><div class="empty"><div>✦</div><strong>ویدئوی نهایی اینجا نمایش داده می‌شود</strong><small id="stageFormat">خروجی 9:16 با صدا و زیرنویس</small></div></div>
           <div class="output-actions"><button id="renderBtn" class="primary" disabled>▶ ساخت ویدئو</button><button id="downloadBtn" class="secondary" disabled>↓ دانلود</button></div>
@@ -1148,6 +1155,39 @@ function bindChoiceControls() {
   });
 }
 
+function bindWorkspaceNavigation() {
+  const root = $(".mobile-workspace");
+  const items = $$(".workspace-nav-item[data-focus]");
+  if (!root || !items.length) return;
+  const setFocus = (focus) => {
+    root.classList.remove("focus-studio", "focus-analysis", "focus-script", "focus-library");
+    root.classList.add(`focus-${focus}`);
+    items.forEach(btn => {
+      const active = btn.dataset.focus === focus;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    if (focus === "library") {
+      state.activeView = "library";
+      $$(".view-tab[data-view]").forEach(x => x.classList.toggle("active", x.dataset.view === "library"));
+      $$(".workspace-panel[data-workspace]").forEach(x => { x.hidden = x.dataset.workspace !== "library"; });
+      renderVideoLibrary();
+    } else {
+      state.activeView = "preview";
+      $$(".view-tab[data-view]").forEach(x => x.classList.toggle("active", x.dataset.view === "preview"));
+      $$(".workspace-panel[data-workspace]").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; });
+    }
+    const target = focus === "library" ? $(".library") : $(".setup");
+    if (target) setTimeout(() => target.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
+  items.forEach(btn => {
+    btn.type = "button";
+    btn.onclick = (event) => { event.preventDefault(); event.stopPropagation(); setFocus(btn.dataset.focus); };
+  });
+  setFocus("studio");
+}
+
+bindWorkspaceNavigation();
 bindChoiceControls();
 updateBuildModeUI();
 updatePlatformUI();
