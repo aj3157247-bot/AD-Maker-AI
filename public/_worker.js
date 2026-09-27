@@ -2,7 +2,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return json({ ok: true, service: "AD Maker AI", version: "4.7.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), groqConfigured: Boolean(env.GROQ_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
+      return json({ ok: true, service: "AD Maker AI", version: "4.8.0", openrouterConfigured: Boolean(env.OPENROUTER_API_KEY), groqConfigured: Boolean(env.GROQ_API_KEY), elevenlabsConfigured: Boolean(env.ELEVENLABS_API_KEY), geminiConfigured: Boolean(env.GEMINI_API_KEY), cloudflareAIConfigured: Boolean(env.AI) });
     }
     if (url.pathname === "/api/generate-script" && request.method === "POST") return generateScript(request, env);
     if (url.pathname === "/api/ai/work-pool" && request.method === "POST") return aiWorkPool(request, env, ctx);
@@ -734,20 +734,15 @@ async function aiWorkPool(request, env, ctx) {
     const duration = Math.max(15, Math.min(300, Number(b.duration) || 60));
     const analysis = b.analysis && typeof b.analysis === "object" ? b.analysis : {};
     const script = String(b.script || analysis.script || "").trim();
-    const customScript = String(b.customScript || "").trim();
     const targetWords = Math.max(35, Math.min(900, Number(b.targetWords) || Math.round(duration * 2.2)));
     const langName = { en:"English", fa:"Persian", ps:"Pashto", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" }[language] || "Persian";
-    const shared = `Brand: ${brand}\nUser description: ${description}\nLanguage: ${langName}\nDuration: ${duration}s\nVerified video summary: ${String(analysis.summary || "")}\nVerified facts: ${(Array.isArray(analysis.facts) ? analysis.facts : []).join(" | ")}\nScenes: ${(Array.isArray(analysis.scenes) ? analysis.scenes : []).map(x => `${x.start || ""}-${x.end || ""} ${x.title || ""}: ${x.description || ""}`).join(" | ")}\nExisting script: ${script}\nUser draft script: ${customScript}`;
+    const shared = `Brand: ${brand}\nUser description: ${description}\nLanguage: ${langName}\nDuration: ${duration}s\nVerified video summary: ${String(analysis.summary || "")}\nVerified facts: ${(Array.isArray(analysis.facts) ? analysis.facts : []).join(" | ")}\nScenes: ${(Array.isArray(analysis.scenes) ? analysis.scenes : []).map(x => `${x.start || ""}-${x.end || ""} ${x.title || ""}: ${x.description || ""}`).join(" | ")}\nExisting script: ${script}`;
 
     let prompt;
     if (phase === "plan") {
       prompt = `You are a production specialist inside AD Maker AI. Continue the work from the shared context below. Do NOT rewrite the entire ad unless needed. Produce a compact production plan that helps a browser renderer finish the video: scene order, which uploaded visual should be used where, subtitle/caption cues, transitions, pacing, and a short QA checklist. Use only verified facts. Return JSON only with keys: scenes, captions, transitions, qa.\n\n${shared}`;
     } else {
-      const draftInstruction = customScript
-        ? `\n\nIMPORTANT USER DRAFT RULES:
-The user supplied the draft script below. It is the source of truth for meaning and factual claims. Write the final script entirely in ${langName}. If the draft is in another language, translate it naturally while preserving its meaning. If it is shorter than the requested duration, intelligently expand and improve it until it naturally fills about ${targetWords} spoken words. If it is longer than the requested duration, intelligently compress and restructure it so it fits about ${targetWords} words. Preserve the user's facts and intent. Improve hook, flow, transitions, clarity and call to action. Do not invent prices, statistics, features, guarantees, customers, locations or other unsupported facts. Return the complete revised script, not a critique.\n\nUSER DRAFT:\n${customScript}`
-        : "";
-      prompt = `You are the final script editor inside AD Maker AI. Build the final spoken advertising script from the shared verified context. Do not invent facts. The selected duration is the highest priority. Make the script natural for ${duration} seconds (about ${targetWords} words). Return ONLY the spoken script, with no headings or notes.${draftInstruction}\n\n${shared}`;
+      prompt = `You are one member of a multi-AI advertising team. Build the final spoken advertising script from the shared verified context. Do not invent facts. Make it natural and long enough for ${duration} seconds (about ${targetWords} words). Return ONLY the spoken script, with no headings or notes.\n\n${shared}`;
     }
 
     const jobs = [];
@@ -1060,6 +1055,27 @@ async function tts(request, env) {
       if ([401, 402, 403].includes(lastError?.status)) break;
     }
 
+    // ElevenLabs can legitimately fail because the account quota is exhausted.
+    // Do not stop the whole video pipeline in that case: Cloudflare AI has a
+    // server-side TTS path and can generate the narration without another key.
+    if (env.AI) {
+      const fallback = await cloudflareTtsFallback(env.AI, text, language);
+      if (fallback?.audioParts?.length) {
+        return json({
+          audio: fallback.audioParts.length === 1 ? fallback.audioParts[0] : null,
+          audioParts: fallback.audioParts.length > 1 ? fallback.audioParts : undefined,
+          mime: fallback.mime || 'audio/wav',
+          fallback: true,
+          provider: fallback.provider,
+          model: fallback.model,
+          chunks: fallback.audioParts.length,
+          characters: text.length,
+          elevenlabsError: lastError?.code || 'elevenlabs_request_failed',
+          elevenlabsDetail: lastError?.message || ''
+        });
+      }
+    }
+
     return json({
       audio: null,
       fallback: true,
@@ -1071,6 +1087,56 @@ async function tts(request, env) {
     }, lastError?.status === 429 ? 429 : 502);
   } catch (e) {
     return json({ audio: null, fallback: true, error: 'tts_server_error', detail: String(e?.message || e) }, 500);
+  }
+}
+
+async function cloudflareTtsFallback(ai, text, language) {
+  const chunks = splitTtsText(text, 9000);
+  const parts = [];
+
+  // Gemini 3.1 Flash TTS supports Persian (including Afghanistan) and Pashto,
+  // and returns WAV audio. It is the first Cloudflare fallback because it
+  // matches the languages used by AD Maker AI particularly well.
+  try {
+    for (const chunk of chunks) {
+      const input = {
+        text: chunk,
+        voice: language === 'fa' || language === 'ps' ? 'Kore' : 'Charon',
+        temperature: 0.35,
+        maxOutputTokens: 4096
+      };
+      const result = await ai.run('google/gemini-3.1-flash-tts', input);
+      const dataUrl = String(result?.audio || '');
+      const base64 = dataUrl.includes(',') ? dataUrl.split(',').slice(1).join(',') : dataUrl;
+      if (!base64) throw new Error('Gemini TTS فایل صوتی برنگرداند.');
+      parts.push(base64);
+    }
+    return { ok: true, provider: 'cloudflare-ai', model: 'google/gemini-3.1-flash-tts', mime: 'audio/wav', audioParts: parts };
+  } catch (geminiError) {
+    // Secondary Cloudflare fallback. Inworld TTS is multilingual and returns
+    // MP3 through a short-lived R2 URL.
+    try {
+      const parts2 = [];
+      const voice = language === 'fa' || language === 'ps' ? 'Amina' : 'Dennis';
+      for (const chunk of chunks) {
+        const result = await ai.run('inworld/tts-2', {
+          output_format: 'mp3',
+          sample_rate: 44100,
+          temperature: 0.7,
+          text: chunk,
+          timestamp_type: 'none',
+          voice_id: voice
+        });
+        const url = String(result?.audio || result?.result?.audio || '');
+        if (!url) throw new Error('Inworld TTS فایل صوتی برنگرداند.');
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`Inworld TTS HTTP ${r.status}`);
+        parts2.push(arrayBufferToBase64(await r.arrayBuffer()));
+      }
+      return { ok: true, provider: 'cloudflare-ai', model: 'inworld/tts-2', mime: 'audio/mpeg', audioParts: parts2 };
+    } catch (inworldError) {
+      return { ok: false, error: `${String(geminiError?.message || geminiError)} | ${String(inworldError?.message || inworldError)}` };
+    }
   }
 }
 
