@@ -1396,7 +1396,7 @@ $("#scriptBtn").onclick = async () => {
       log("ویدئو بدون گویندگی ساخته نمی‌شود تا خروجی بی‌صدا تحویل نشود.", "error");
       return;
     }
-    setStage(2, "done"); setProgress(52, "گویندگی آماده", t("voiceReady")); log(t("voiceReady"), "success");
+    setStage(2, "done"); setProgress(52, "گویندگی آماده", state.voiceMode === "elevenlabs" ? t("voiceReady") : "گویندگی با مسیر پشتیبان AI آماده شد؛ تولید ویدئو ادامه دارد."); log(state.voiceMode === "elevenlabs" ? t("voiceReady") : "گویندگی با مسیر پشتیبان AI آماده شد و خط تولید ادامه پیدا می‌کند.", "success");
 
     setStage(3); setProgress(55, "صحنه‌ها", "رسانه‌ها، متن و رنگ برند برای ویدئو چیده می‌شوند..."); log("مرحله صحنه‌ها شروع شد؛ نتیجه AIهای همکار در صورت آماده‌بودن ادغام می‌شود.");
     if (productionPlanPromise) await Promise.race([productionPlanPromise, wait(800)]);
@@ -1466,7 +1466,10 @@ async function getVoice() {
       throw new Error(`پاسخ /api/tts قابل خواندن نیست (HTTP ${response.status}).`);
     }
     if (!response.ok) {
-      throw new Error(j?.detail || j?.message || j?.error || `خطای گویندگی: HTTP ${response.status}`);
+      const providerHint = Array.isArray(j?.providers) && j.providers.length
+        ? ` مسیرهای بررسی‌شده: ${j.providers.map(x => x.provider).join(" → ")}`
+        : "";
+      throw new Error(`${j?.detail || j?.message || j?.error || `خطای گویندگی: HTTP ${response.status}`}${providerHint}`);
     }
 
     let blob = null;
@@ -1479,13 +1482,16 @@ async function getVoice() {
 
     if (blob?.size) {
       state.voiceBlob = blob;
-      state.voiceMode = j.provider === "elevenlabs" ? "elevenlabs" : "cloudflare-ai";
-      if ($("#voiceState")) $("#voiceState").textContent = j.provider === "elevenlabs" ? "گویندگی AI" : "گویندگی AI پشتیبان";
-      const providerLabel = j.provider === "elevenlabs"
-        ? (j.model === "eleven_v3" ? "Eleven v3" : j.model === "eleven_flash_v2_5" ? "Eleven Flash v2.5" : "Eleven Multilingual v2")
-        : (j.model === "google/gemini-3.1-flash-tts" ? "Gemini TTS · Cloudflare AI" : "Inworld TTS · Cloudflare AI");
-      if ($("#voiceDetail")) $("#voiceDetail").textContent = `${providerLabel} · ${languageLabel(state.language)} ✓`;
-      log(`گویندگی با ${providerLabel} آماده شد${j.chunks > 1 ? ` (${j.chunks} بخش)` : ""}.`, "success");
+      state.voiceMode = j.provider || "tts-fallback";
+      if ($("#voiceState")) $("#voiceState").textContent = j.provider === "elevenlabs" ? "گویندگی AI" : "گویندگی پشتیبان AI";
+      const providerName = j.provider === "elevenlabs"
+        ? (j.model === "eleven_v3" ? "Eleven v3" : j.model === "eleven_flash_v2_5" ? "Eleven Flash v2.5" : "ElevenLabs")
+        : j.provider === "gemini-tts" ? "Gemini 3.8 Flash-Lite TTS"
+        : j.provider === "openrouter-tts" ? "OpenRouter · Gemini TTS"
+        : j.provider === "cloudflare-tts" ? "Cloudflare AI · MeloTTS"
+        : "AI TTS";
+      if ($("#voiceDetail")) $("#voiceDetail").textContent = `${providerName} · ${languageLabel(state.language)} ✓`;
+      log(`گویندگی با موفقیت آماده شد${j.chunks > 1 ? ` (${j.chunks} بخش)` : ""}${j.fallback ? ` · مسیر پشتیبان: ${j.provider || "AI"}` : ""}.`, "success");
       return blob;
     }
     throw new Error(j?.detail || j?.error || "سرور گویندگی فایل صوتی برنگرداند.");
@@ -1493,8 +1499,7 @@ async function getVoice() {
     const detail = e?.name === "AbortError"
       ? "درخواست گویندگی بعد از ۹۰ ثانیه پاسخ نداد."
       : String(e?.message || e || "خطای نامشخص");
-    log(`گویندگی اصلی در دسترس نبود: ${detail}`, "warning");
-    log("سیستم به‌صورت خودکار مسیر گویندگی پشتیبان Cloudflare AI را امتحان کرد؛ اگر آن هم فعال نباشد، خروجی بی‌صدا ساخته نمی‌شود.", "info");
+    log(`گویندگی ساخته نشد: ${detail}`, "error");
   }
 
   if ($("#voiceState")) $("#voiceState").textContent = "گویندگی آماده نیست";
