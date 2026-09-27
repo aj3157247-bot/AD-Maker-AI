@@ -734,15 +734,16 @@ async function aiWorkPool(request, env, ctx) {
     const duration = Math.max(15, Math.min(300, Number(b.duration) || 60));
     const analysis = b.analysis && typeof b.analysis === "object" ? b.analysis : {};
     const script = String(b.script || analysis.script || "").trim();
+    const customScript = String(b.customScript || "").trim();
     const targetWords = Math.max(35, Math.min(900, Number(b.targetWords) || Math.round(duration * 2.2)));
     const langName = { en:"English", fa:"Persian", ps:"Pashto", ar:"Arabic", tr:"Turkish", ur:"Urdu", hi:"Hindi", ru:"Russian", es:"Spanish", fr:"French", de:"German", id:"Indonesian", uz:"Uzbek" }[language] || "Persian";
-    const shared = `Brand: ${brand}\nUser description: ${description}\nLanguage: ${langName}\nDuration: ${duration}s\nVerified video summary: ${String(analysis.summary || "")}\nVerified facts: ${(Array.isArray(analysis.facts) ? analysis.facts : []).join(" | ")}\nScenes: ${(Array.isArray(analysis.scenes) ? analysis.scenes : []).map(x => `${x.start || ""}-${x.end || ""} ${x.title || ""}: ${x.description || ""}`).join(" | ")}\nExisting script: ${script}`;
+    const shared = `Brand: ${brand}\nUser description: ${description}\nLanguage: ${langName}\nDuration: ${duration}s\nTarget words: about ${targetWords}\nUser draft script: ${customScript || script}\nVerified video summary: ${String(analysis.summary || "")}\nVerified facts: ${(Array.isArray(analysis.facts) ? analysis.facts : []).join(" | ")}\nScenes: ${(Array.isArray(analysis.scenes) ? analysis.scenes : []).map(x => `${x.start || ""}-${x.end || ""} ${x.title || ""}: ${x.description || ""}`).join(" | ")}\nExisting script: ${script}`;
 
     let prompt;
     if (phase === "plan") {
       prompt = `You are a production specialist inside AD Maker AI. Continue the work from the shared context below. Do NOT rewrite the entire ad unless needed. Produce a compact production plan that helps a browser renderer finish the video: scene order, which uploaded visual should be used where, subtitle/caption cues, transitions, pacing, and a short QA checklist. Use only verified facts. Return JSON only with keys: scenes, captions, transitions, qa.\n\n${shared}`;
     } else {
-      prompt = `You are one member of a multi-AI advertising team. Build the final spoken advertising script from the shared verified context. Do not invent facts. Make it natural and long enough for ${duration} seconds (about ${targetWords} words). Return ONLY the spoken script, with no headings or notes.\n\n${shared}`;
+      prompt = `You are one member of a multi-AI advertising team. The user wrote the draft script below. Produce the final spoken script for ${duration} seconds, about ${targetWords} words. Preserve the draft's meaning and factual claims. If the draft is too short, expand it naturally with useful transitions, explanation and a call to action supported by the draft. If it is too long, compress it while keeping the important meaning. Do not invent prices, statistics, features, locations, guarantees, customers or other unsupported facts. Return ONLY the spoken script, with no headings or notes.\n\n${shared}`;
     }
 
     const jobs = [];
@@ -831,7 +832,8 @@ function mergeProductionPlans(plans) {
 async function generateScript(request, env) {
   try {
     const b = await request.json();
-    if (!b.brand || !b.description) return json({ error: "brand_and_description_required" }, 400);
+    const incomingCustomScript = String(b.customScript || "").trim();
+    if (!b.brand || (!b.description && !incomingCustomScript)) return json({ error: "brand_and_script_required" }, 400);
 
     const duration = Math.max(15, Math.min(300, Number(b.duration) || 15));
     const targetWords = Math.max(35, Math.min(900, Number(b.targetWords) || Math.round(duration * 2.2)));
@@ -839,9 +841,9 @@ async function generateScript(request, env) {
     const lang = languageNames[b.language] || "Persian";
     const style = b.style || "YouTube Shorts";
     const scriptMode = b.scriptMode || "ai";
-    const customScript = String(b.customScript || "").trim();
-    const modeInstruction = scriptMode === "hybrid" && customScript
-      ? `\nThe user also supplied a draft script below. Preserve its meaning and factual claims, but professionally rewrite and expand it to fit the target duration. Improve the hook, flow, benefits, transitions and call to action without inventing unsupported facts.\n\nUser draft script:\n${customScript}`
+    const customScript = incomingCustomScript;
+    const modeInstruction = customScript
+      ? `\nThe user supplied the complete draft script below. This draft is the source of truth. Preserve its meaning and every factual claim. TIME-FIT it to the target video: if it is too short, expand it naturally; if it is too long, compress it without losing the important meaning. Do not add unsupported facts.\n\nUser draft script:\n${customScript}`
       : "";
     const videoAnalysis = b.videoAnalysis || null;
     const videoInstruction = videoAnalysis
@@ -851,7 +853,7 @@ async function generateScript(request, env) {
     const prompt = `You are an expert advertising copywriter creating a complete voice-over for an Afghanistan-focused product advertisement.
 
 Brand/product: ${b.brand}
-User-provided description: ${b.description}
+User-provided description: ${b.description || customScript}
 Language: ${lang}
 Target platform: ${style}
 Target video duration: ${duration} seconds (${Math.floor(duration / 60)} minutes ${duration % 60} seconds)
@@ -867,7 +869,7 @@ Requirements:
 - Build a clear opening hook, explanation, benefits, practical value, and ending call to action.
 - The script should be coherent from beginning to end and should not repeat the same sentence just to increase length.
 - Aim for approximately ${targetWords} words (within about 15% if possible).
-- The selected duration is the priority: do not return a short 15–30 second script for a multi-minute request.${modeInstruction}${videoInstruction}`;
+- The selected duration is the priority. If the user draft is shorter than the video, expand it naturally. If it is longer, compress it so the spoken delivery fits the video. Do not merely cut it at an arbitrary word boundary.${modeInstruction}${videoInstruction}`;
 
     if (env.OPENROUTER_API_KEY) {
       let script = await openRouterScript(env.OPENROUTER_API_KEY, prompt, request);
@@ -885,7 +887,7 @@ User description: ${b.description}`;
         const count = wordCount(script);
         // If a free model under-delivers badly on a long ad, ask once for a focused expansion.
         if (count < Math.max(35, Math.floor(targetWords * 0.68)) && targetWords >= 90) {
-          const expandPrompt = `Expand the following advertising voice-over to approximately ${targetWords} words so it can fill a ${duration}-second video. Preserve every factual claim already present. Add only natural, useful context, benefits, use cases, transitions and a call to action that are supported by the original user description. Do not invent prices, statistics, awards, guarantees, customers or unsupported features. Return ONLY the complete rewritten spoken script in ${lang}.\n\nOriginal user description:\n${b.description}\n\nCurrent script:\n${script}`;
+          const expandPrompt = `Expand the following advertising voice-over to approximately ${targetWords} words so it can fill a ${duration}-second video. Preserve every factual claim already present. Add only natural, useful context, benefits, use cases, transitions and a call to action that are supported by the original user description. Do not invent prices, statistics, awards, guarantees, customers or unsupported features. Return ONLY the complete rewritten spoken script in ${lang}.\n\nOriginal user draft:\n${customScript || b.description}\n\nCurrent script:\n${script}`;
           const expanded = await openRouterScript(env.OPENROUTER_API_KEY, expandPrompt, request, 2400);
           if (expanded && wordCount(expanded) > count) script = expanded;
         }
