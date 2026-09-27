@@ -7,8 +7,8 @@ const state = {
   language: "en",
   duration: 15,
   script: "",
-  scriptMode: "hybrid",
-  buildMode: "manual",
+  scriptMode: "ai",
+  buildMode: "pro",
   customScript: "",
   activeView: "preview",
   busy: false,
@@ -69,8 +69,8 @@ function setDir() {
 
 function renderShell() {
   const stages = [
-    ["01", "ورودی", "نام + سناریو"],
-    ["02", "تنظیم سناریو", "AI"],
+    ["01", "اطلاعات", "شروع"],
+    ["02", "سناریو", "AI"],
     ["03", "گویندگی", "صدا"],
     ["04", "صحنه‌ها", "رسانه"],
     ["05", "رندر", "ویدئو"],
@@ -79,68 +79,99 @@ function renderShell() {
   $("#app").innerHTML = `
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand"><div class="brandmark">✦</div><div><strong>AD Maker AI</strong><span>استودیوی ساخت تبلیغ</span></div></div>
-      <div class="top-actions"><div class="top-badge"><i></i><span>AI آماده است</span></div><button id="helpBtn" class="icon-btn" aria-label="راهنما">?</button></div>
+      <div class="brand">
+        <div class="brandmark">✦</div>
+        <div><strong>AD Maker AI</strong><span>استودیوی ساخت تبلیغ</span></div>
+      </div>
+      <div class="top-actions">
+        <div class="top-badge"><i></i><span>AI آماده است</span></div>
+        <button id="helpBtn" class="icon-btn" aria-label="راهنما">?</button>
+      </div>
     </header>
+
     <main>
-      <section class="hero-card compact-hero">
+      <section class="hero-card">
         <div class="hero-copy">
           <div class="eyebrow">AI AD STUDIO</div>
-          <h1>سناریو را بده، <span>تبلیغ را بساز.</span></h1>
-          <p>اسم، سناریو و رسانه را انتخاب کن؛ AI متن را دقیقاً با طول ویدئو هماهنگ می‌کند.</p>
-          <div class="hero-pills"><span>✦ تنظیم خودکار سناریو</span><span>🎙 گویندگی AI</span><span>▣ رندر حرفه‌ای</span></div>
+          <h1>تبلیغت را <span>حرفه‌ای بساز.</span></h1>
+          <p>محصولت را معرفی کن، رسانه‌ها را اضافه کن و بقیه را به AI بسپار.</p>
+          <div class="hero-pills"><span>🎙 گویندگی AI</span><span>✦ سناریوی هوشمند</span><span>▣ خروجی 9:16</span></div>
         </div>
         <div class="hero-art" aria-hidden="true"><div class="hero-phone"><div class="hero-phone-top"></div><div class="hero-play">▶</div><div class="hero-lines"><i></i><i></i><i></i></div></div><div class="glow g1"></div><div class="glow g2"></div></div>
       </section>
 
       <nav class="workspace-nav" aria-label="بخش‌های AD Maker AI">
         <button type="button" class="workspace-nav-item active" data-focus="studio"><span>🎬</span><b>استودیو</b><small>ساخت تبلیغ</small></button>
-        <button type="button" class="workspace-nav-item" data-focus="script"><span>✦</span><b>سناریو + نام</b><small>تنظیم با AI</small></button>
         <button type="button" class="workspace-nav-item" data-focus="library"><span>▣</span><b>کتابخانه</b><small>ویدئوهای ساخته‌شده</small></button>
       </nav>
 
       <section class="mobile-workspace focus-studio">
         <section class="setup card">
-          <div class="section-head"><div><small>شروع</small><h2>اطلاعات تبلیغ</h2></div><span class="step-state">ساده و سریع</span></div>
+          <div class="section-head"><div><small>مرحله ۱</small><h2>اطلاعات تبلیغ</h2></div><span class="step-state">شروع سریع</span></div>
 
-          <div class="field"><label>نام برند یا محصول <b>*</b></label><input id="brand" class="input" placeholder="مثلاً: بازارک"></div>
-          <div class="field"><label>سناریوی تبلیغ <b>*</b></label><textarea id="customScript" placeholder="سناریویی که می‌خواهی گوینده بگوید را اینجا بنویس..."></textarea><div class="hint">اگر متن کوتاه‌تر از ویدئو باشد، AI آن را طبیعی و حرفه‌ای تا پایان ویدئو گسترش می‌دهد؛ اگر طولانی‌تر باشد، بدون تغییر معنی با زمان ویدئو هماهنگ می‌کند.</div></div>
+          <div class="field focus-core"><label>نام برند یا محصول <b>*</b></label><input id="brand" class="input" placeholder="مثلاً: بازارک"></div>
+          <div class="field focus-core"><label>درباره محصول یا خدمات <b>*</b></label><textarea id="desc" placeholder="چه چیزی می‌فروشی یا چه خدمتی ارائه می‌کنی؟ مزیت اصلی، مخاطب و راه ارتباطی را بنویس..."></textarea><div class="hint">اگر توضیحات کوتاه باشد، AI آن را متناسب با زمان ویدئو حرفه‌ای‌تر می‌کند.</div></div>
 
-          <div class="quick-grid">
+          <div class="quick-grid focus-core">
             <div class="field"><label>زبان تبلیغ</label><select id="lang">
-              <option value="en">English</option><option value="ar">العربية</option><option value="tr">Türkçe</option><option value="ur">اردو</option><option value="hi">हिन्दी</option><option value="fa" selected>فارسی</option><option value="ps">پښتو</option><option value="ru">Русский</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="id">Bahasa Indonesia</option><option value="uz">O‘zbekcha</option>
+              <option value="en">English</option><option value="ar">العربية</option><option value="tr">Türkçe</option><option value="ur">اردو</option><option value="hi">हिन्दी</option><option value="fa">فارسی</option><option value="ps">پښتو</option><option value="ru">Русский</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="id">Bahasa Indonesia</option><option value="uz">O‘zbekcha</option>
             </select></div>
-            <div class="field"><label>مدت هدف</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select><small id="durationHint" class="field-note">اگر ویدئو اضافه شود، مدت واقعی ویدئو مبنا قرار می‌گیرد.</small></div>
+            <div class="field"><label>مدت</label><select id="duration"><option value="15">15 ثانیه</option><option value="30">30 ثانیه</option><option value="45">45 ثانیه</option><option value="60">60 ثانیه</option><option value="90">90 ثانیه</option><option value="120">2 دقیقه</option><option value="180">3 دقیقه</option><option value="240">4 دقیقه</option><option value="300">5 دقیقه</option></select></div>
           </div>
 
-          <div class="field media-field"><div class="field-title"><label>رسانه‌های تبلیغ</label><span>هر تعداد</span></div><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>همه تصاویر و کلیپ‌هایی که می‌خواهی در تبلیغ استفاده شوند را انتخاب کن.</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div></div>
+          <div class="field custom-script-field focus-core">
+            <div class="field-title"><label>سناریوی تبلیغ <b>*</b></label><span>AI آن را تنظیم می‌کند</span></div>
+            <div class="custom-script-wrap">
+              <textarea id="customScript" placeholder="سناریوی تبلیغت را اینجا بنویس..."></textarea>
+              <small>سناریو را خودت می‌دهی. AI اگر کوتاه باشد آن را تا مدت ویدئو حرفه‌ای تکمیل می‌کند؛ اگر طولانی باشد خلاصه و هماهنگش می‌کند، بدون ساختن اطلاعات بی‌اساس.</small>
+            </div>
+          </div>
 
-          <div class="compact-options">
+          <div class="field focus-studio-only"><div class="platform-title"><label>پلتفرم تبلیغ</label><span id="selectedPlatform">YouTube Shorts · 9:16</span></div><div class="style-grid platform-grid">
+            <button type="button" class="style-chip active" data-style="youtube_short"><i>▶</i><span>YouTube Shorts</span></button>
+            <button type="button" class="style-chip" data-style="youtube"><i>▶</i><span>YouTube</span></button>
+            <button type="button" class="style-chip" data-style="tiktok"><i>♪</i><span>TikTok</span></button>
+            <button type="button" class="style-chip" data-style="instagram_reels"><i>◎</i><span>Instagram Reels</span></button>
+            <button type="button" class="style-chip" data-style="facebook"><i>f</i><span>Facebook</span></button>
+            <button type="button" class="style-chip" data-style="instagram"><i>◎</i><span>Instagram</span></button>
+            <button type="button" class="style-chip" data-style="linkedin"><i>in</i><span>LinkedIn</span></button>
+            <button type="button" class="style-chip" data-style="whatsapp"><i>◌</i><span>WhatsApp</span></button>
+          </div></div>
+
+          <div class="field media-field focus-analysis"><div class="field-title"><label>رسانه‌های تبلیغ</label><span>هر تعداد</span></div><label class="drop"><input id="files" type="file" accept="*/*" multiple><div class="upload-icon">＋</div><strong>عکس و ویدئو را اضافه کن</strong><span>برای بهترین نتیجه، همه تصاویر و کلیپ‌های محصولت را انتخاب کن.</span><small>JPG · PNG · WEBP · HEIC · MP4 · MOV · MKV · WebM و بیشتر</small></label><div id="assets" class="asset-list"></div></div>
+
+          <div class="compact-options focus-studio-only">
             <label class="music-drop"><input id="music" type="file" accept="audio/*"><span>♫</span><div><strong>موسیقی پس‌زمینه</strong><small id="musicName">اختیاری</small></div></label>
             <div class="color-row"><input id="brandColor" type="color" value="#7c5cff" aria-label="رنگ برند"><span id="colorHex">#7C5CFF</span></div>
           </div>
 
-          <div class="button-row"><button id="scriptBtn" class="primary big">✦ تنظیم سناریو و ساخت تبلیغ</button><button id="demoBtn" class="secondary demo-btn">نمونه</button></div>
+          <div class="button-row focus-core"><button id="scriptBtn" class="primary big">✦ ساخت ویدئو</button><button id="demoBtn" class="secondary demo-btn">نمونه</button></div>
         </section>
 
-        <section class="production card">
-          <div class="section-head"><div><small>خط تولید</small><h2>در حال ساخت</h2></div><span id="overallState" class="state-dot">● آماده</span></div>
+        <section class="production card focus-studio-only">
+          <div class="section-head"><div><small>مرحله ۲</small><h2>ساخت خودکار</h2></div><span id="overallState" class="state-dot">● آماده</span></div>
           <div class="progress-card">
-            <div class="progress-top"><div><strong id="progressTitle">آماده شروع</strong><small id="progressText">نام، سناریو و رسانه را وارد کن.</small></div><b id="progressPercent">0%</b></div>
+            <div class="progress-top"><div><strong id="progressTitle">آماده شروع</strong><small id="progressText">اطلاعات را وارد کن و ساخت را شروع کن.</small></div><b id="progressPercent">0%</b></div>
             <div class="progress-track"><i id="bar"></i></div>
-            <div id="stageGrid" class="stage-grid">${stages.map((s,i)=>`<div class="pipeline-stage ${i===0?"active":"waiting"}" data-stage="${i}"><div class="stage-number">${s[0]}</div><div><b>${s[1]}</b><small>${s[2]}</small></div><span class="stage-check">${i===0?"●":"○"}</span></div>`).join("")}</div>
+            <div id="stageGrid" class="stage-grid">${stages.map((s,i)=>`<div class="pipeline-stage ${i===0?"active":""}" data-stage="${i}"><div class="stage-number">${s[0]}</div><div><b>${s[1]}</b><small>${s[2]}</small></div><span class="stage-check">○</span></div>`).join("")}</div>
           </div>
-          <details class="script-details"><summary><span>📝 سناریوی نهایی</span><em>بیشتر</em></summary><div class="script-panel"><div class="panel-title"><span id="scriptSource">منبع: —</span><div><button id="scriptMore" class="tiny-btn" type="button">بیشتر</button><button id="editScript" class="tiny-btn" disabled>ویرایش</button></div></div><textarea id="scriptEditor" disabled placeholder="سناریوی تنظیم‌شده اینجا قرار می‌گیرد..."></textarea><div class="script-meta"><span id="scriptCount">0 کلمه</span><span>متن با مدت ویدئو هماهنگ می‌شود</span></div></div></details>
+
+          <details class="script-details"><summary><span>📝 سناریوی تبلیغ</span><em>بیشتر</em></summary><div class="script-panel"><div class="panel-title"><span id="scriptSource">منبع: —</span><div><button id="scriptMore" class="tiny-btn" type="button">بیشتر</button><button id="editScript" class="tiny-btn" disabled>ویرایش</button></div></div><textarea id="scriptEditor" disabled placeholder="سناریوی تبلیغاتی اینجا قرار می‌گیرد..."></textarea><div class="script-meta"><span id="scriptCount">0 کلمه</span><span>برای دیدن کل متن «بیشتر» را بزن</span></div></div></details>
+
           <details class="ops-details"><summary><span>جزئیات عملیات</span><em>نمایش</em></summary><div class="live-log"><div class="log-head"><span>وضعیت ساخت</span><button id="clearLog" class="tiny-btn">پاک کردن</button></div><div id="log" class="log"><div class="log-line muted"><span>●</span> منتظر شروع پروژه...</div></div></div></details>
         </section>
 
-        <section class="view-switch card">
+        <section class="view-switch card focus-studio-only">
           <div class="section-head"><div><small>دسته‌ها</small><h2>بخش کاری</h2></div><span id="viewState">استودیو</span></div>
-          <div class="view-tabs"><button type="button" class="view-tab active" data-view="preview"><span>🎬</span><b>استودیو و پیش‌نمایش</b><small>ساخت، مشاهده و دانلود</small></button><button type="button" class="view-tab" data-view="library"><span>▣</span><b>کتابخانه ویدئوها</b><small>ویدئوهای ساخته‌شده</small></button></div>
+          <div class="view-tabs">
+            <button type="button" class="view-tab active" data-view="preview"><span>🎬</span><b>استودیو و پیش‌نمایش</b><small>ساخت، مشاهده و دانلود</small></button>
+            <button type="button" class="view-tab" data-view="library"><span>▣</span><b>کتابخانه ویدئوها</b><small>ویدئوهای ساخته‌شده</small></button>
+          </div>
+          <div class="view-hint">از «دسته‌ها» بخش موردنظر را انتخاب کن؛ هر بار فقط همان بخش نمایش داده می‌شود.</div>
         </section>
 
-        <section class="result card workspace-panel" data-workspace="preview">
-          <div class="section-head"><div><small>خروجی</small><h2>پیش‌نمایش ویدئو</h2></div><span id="outputState">آماده ساخت</span></div>
+        <section class="result card workspace-panel focus-studio-only" data-workspace="preview">
+          <div class="section-head"><div><small>مرحله ۳</small><h2>پیش‌نمایش و خروجی</h2></div><span id="outputState">آماده ساخت</span></div>
           <div id="stage" class="video-stage"><div class="empty"><div>✦</div><strong>ویدئوی نهایی اینجا نمایش داده می‌شود</strong><small id="stageFormat">خروجی 9:16 با صدا و زیرنویس</small></div></div>
           <div class="output-actions"><button id="renderBtn" class="primary" disabled>▶ ساخت ویدئو</button><button id="downloadBtn" class="secondary" disabled>↓ دانلود</button></div>
           <div id="resultActions" class="result-extra" hidden><button id="rerenderBtn" class="secondary">↻ ساخت دوباره</button><button id="newBtn" class="ghost">＋ پروژه جدید</button></div>
@@ -148,14 +179,13 @@ function renderShell() {
 
         <section class="library card workspace-panel" data-workspace="library" hidden>
           <div class="section-head"><div><small>کتابخانه</small><h2>ویدئوهای ساخته‌شده</h2></div><span id="libraryCount">0 ویدئو</span></div>
-          <div id="videoLibrary" class="video-library"><div class="library-empty"><div>▣</div><strong>هنوز ویدئویی ذخیره نشده</strong><small>ویدئوهای ساخته‌شده را اینجا نگه می‌داریم.</small></div></div>
+          <div id="videoLibrary" class="video-library"><div class="library-empty"><div>▣</div><strong>هنوز ویدئویی ذخیره نشده</strong><small>ویدئوهای ساخته‌شده را اینجا نگه می‌داریم تا بعداً دوباره ببینی، دانلود کنی یا حذف کنی.</small></div></div>
         </section>
       </section>
     </main>
   </div>`;
   setDir();
 }
-
 renderShell();
 
 function setProgress(percent, title, text) {
@@ -998,16 +1028,14 @@ function assetPreview() {
 
 $("#files").onchange = e => {
   state.assets = [...e.target.files];
-  state.videoAnalysis = null;
   assetPreview();
   renderVideoLibrary();
-  updateVideoDurationHint();
-  log(`${state.assets.length} فایل انتخاب شد؛ فرمت هر فایل هنگام ساخت بررسی و در صورت نیاز تبدیل می‌شود.`, "success");
+  log(`${state.assets.length} فایل انتخاب شد؛ فرمت هر فایل هنگام ساخت به‌صورت خودکار بررسی و در صورت نیاز تبدیل می‌شود.`, "success");
 };
 
 $("#music").onchange = e => { const f = e.target.files[0]; $("#musicName").textContent = f ? f.name : "اختیاری"; };
-$("#lang").onchange = e => { state.language = e.target.value; setDir(); };
-$("#duration").onchange = e => { state.duration = +e.target.value; updateVideoDurationHint(); };
+$("#lang").onchange = e => { state.language = e.target.value; setDir(); $("#brand").placeholder = t("brandPlaceholder"); $("#desc").placeholder = t("descPlaceholder"); };
+$("#duration").onchange = e => state.duration = +e.target.value;
 $("#brandColor").oninput = e => { state.brandColor = e.target.value; $("#colorHex").textContent = e.target.value.toUpperCase(); document.documentElement.style.setProperty("--brand", e.target.value); };
 
 function updatePlatformUI() {
@@ -1023,22 +1051,10 @@ function buildModeLabel(mode) {
 }
 
 function updateBuildModeUI() {
-  const meta = {
-    pro: { title: "🎬 ساخت حرفه‌ای", summary: "برای تبلیغاتی که می‌خواهی رسانه‌ها و ویدئوی معرفی با دقت تحلیل شوند.", selected: "حرفه‌ای · تحلیل + AI", button: "✦ ساخت تبلیغ حرفه‌ای" },
-    fast: { title: "⚡ ساخت سریع", summary: "تحلیل عمیق ویدئو حذف می‌شود تا سریع‌تر به سناریو، گویندگی و خروجی برسی.", selected: "سریع · کمترین انتظار", button: "⚡ ساخت سریع تبلیغ" },
-    video: { title: "🔍 تحلیل هوشمند ویدئو", summary: "ویدئوی معرفی با Gemini بررسی می‌شود و سناریو بر اساس صحنه‌ها و قابلیت‌های واقعی ساخته می‌شود.", selected: "ویدئو · تحلیل Gemini", button: "🔍 تحلیل و ساخت تبلیغ" },
-    manual: { title: "✎ سناریوی اختصاصی من", summary: "سناریو کاملاً از متن تو می‌آید؛ هیچ بازنویسی AI روی متن اصلی انجام نمی‌شود.", selected: "اختصاصی · کنترل کامل", button: "✎ ساخت از سناریوی من" },
-    hybrid: { title: "✦+ همکاری من + AI", summary: "پیش‌نویس تو حفظ می‌شود و AI آن را حرفه‌ای، منسجم و متناسب با زمان و پلتفرم می‌کند.", selected: "همکاری · تو + AI", button: "✦+ پرداخت سناریو با AI" }
-  }[state.buildMode] || null;
-  if (!meta) return;
-  const selected = $("#selectedBuildMode");
-  const info = $("#buildModeInfo");
   const btn = $("#scriptBtn");
   const custom = $("#customScriptWrap");
-  if (selected) selected.textContent = meta.selected;
-  if (info) info.innerHTML = `<strong>${escapeHtml(meta.title)}</strong><span>${escapeHtml(meta.summary)}</span>`;
-  if (btn) btn.textContent = meta.button;
-  if (custom) custom.hidden = !["manual", "hybrid"].includes(state.buildMode);
+  if (btn) btn.textContent = "✦ ساخت ویدئو";
+  if (custom) custom.hidden = false;
 }
 
 function bindChoiceControls() {
@@ -1109,7 +1125,7 @@ function bindWorkspaceNavigation() {
   const items = $$(".workspace-nav-item[data-focus]");
   if (!root || !items.length) return;
   const setFocus = (focus) => {
-    root.classList.remove("focus-studio", "focus-script", "focus-library");
+    root.classList.remove("focus-studio", "focus-analysis", "focus-script", "focus-library");
     root.classList.add(`focus-${focus}`);
     items.forEach(btn => {
       const active = btn.dataset.focus === focus;
@@ -1129,7 +1145,10 @@ function bindWorkspaceNavigation() {
     const target = focus === "library" ? $(".library") : $(".setup");
     if (target) setTimeout(() => target.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   };
-  items.forEach(btn => { btn.type="button"; btn.onclick=(event)=>{ event.preventDefault(); event.stopPropagation(); setFocus(btn.dataset.focus); }; });
+  items.forEach(btn => {
+    btn.type = "button";
+    btn.onclick = (event) => { event.preventDefault(); event.stopPropagation(); setFocus(btn.dataset.focus); };
+  });
   setFocus("studio");
 }
 
@@ -1138,136 +1157,168 @@ bindChoiceControls();
 updateBuildModeUI();
 updatePlatformUI();
 updateVideoAnalysisUI();
-updateVideoDurationHint();
 
 $("#demoBtn").onclick = () => {
   $("#brand").value = "بازارک";
-  $("#customScript").value = "در بازارک، خرید و فروش آنلاین را ساده‌تر تجربه کنید. آگهی خود را ثبت کنید، کالا و خدمات مورد نیازتان را پیدا کنید و با فروشنده ارتباط بگیرید.";
+  $("#desc").value = "بازارک یک بازار آنلاین برای خرید و فروش کالا، خدمات و آگهی‌ها در افغانستان است. کاربران می‌توانند آگهی ثبت کنند، محصولات مورد نیازشان را پیدا کنند و با فروشنده ارتباط بگیرند.";
   state.language = "fa"; $("#lang").value = "fa"; setDir();
-  log("نمونه سناریو برای شروع سریع وارد شد.", "success");
-  setProgress(5, "نمونه آماده است", "حالا روی «تنظیم سناریو و ساخت تبلیغ» بزن.");
+  log("نمونه واقعی بازارک برای شروع سریع وارد شد.", "success");
+  setProgress(5, "نمونه آماده است", "حالا روی «ساخت ویدئو» بزن.");
 };
-
-async function getUploadedVideoDuration() {
-  const videos = state.assets.filter(isVideoFile);
-  if (!videos.length) return 0;
-  let total = 0;
-  for (const file of videos) {
-    const url = URL.createObjectURL(file);
-    try {
-      const duration = await new Promise((resolve) => {
-        const v = document.createElement("video");
-        v.preload = "metadata";
-        v.onloadedmetadata = () => resolve(Number.isFinite(v.duration) ? v.duration : 0);
-        v.onerror = () => resolve(0);
-        v.src = url;
-      });
-      total += Math.max(0, duration);
-    } finally { URL.revokeObjectURL(url); }
-  }
-  return Math.round(total * 10) / 10;
-}
-
-function updateVideoDurationHint() {
-  const hint = $("#durationHint");
-  if (!hint) return;
-  const videos = state.assets.filter(isVideoFile);
-  hint.textContent = videos.length
-    ? "AI مدت واقعی ویدئو را مبنا می‌گیرد و سناریو را با همان زمان هماهنگ می‌کند."
-    : "بدون ویدئو، مدت انتخاب‌شده مبنا قرار می‌گیرد.";
-}
 
 $("#scriptBtn").onclick = async () => {
   if (state.busy) return;
   const brand = $("#brand").value.trim();
+  const desc = $("#desc").value.trim();
   const customScript = $("#customScript").value.trim();
   state.customScript = customScript;
-  state.scriptMode = "hybrid";
-  state.buildMode = "manual";
+
   if (!brand || !customScript) {
-    const msg = "نام برند و سناریوی خودت را وارد کن.";
-    setProgress(0, "اطلاعات ناقص", msg); log(msg, "error"); return;
+    const msg = !brand ? "نام برند یا محصول را وارد کن." : "سناریوی تبلیغ را وارد کن.";
+    setProgress(0, "اطلاعات ناقص", msg);
+    log(msg, "error");
+    return;
   }
 
-  state.busy = true; state.generated = false; $("#scriptBtn").disabled = true; $("#renderBtn").disabled = true; $("#downloadBtn").disabled = true;
-  $("#resultActions").hidden = true; $("#scriptEditor").disabled = true; $("#editScript").disabled = true;
-  $("#log").innerHTML = ""; $("#stage").innerHTML = `<div class="processing"><div class="spinner"></div><strong>در حال آماده‌سازی پروژه...</strong><small>AI سناریو را با مدت واقعی ویدئو هماهنگ می‌کند.</small></div>`;
+  state.busy = true;
+  state.generated = false;
+  state.scriptMode = "hybrid";
+  state.buildMode = "manual";
+  $("#scriptBtn").disabled = true;
+  $("#renderBtn").disabled = true;
+  $("#downloadBtn").disabled = true;
+  $("#resultActions").hidden = true;
+  $("#scriptEditor").disabled = true;
+  $("#editScript").disabled = true;
+  $("#log").innerHTML = "";
   $("#overallState").textContent = "● در حال تولید";
 
+  let stopConveyorWatchdog = () => {};
   try {
-    setStage(0); setProgress(8, "ورودی", "نام و سناریوی شما دریافت شد.");
-    if (state.assets.length) log(t("mediaReady"), "success"); else log(t("noMedia"));
+    stopConveyorWatchdog = startConveyorWatchdog();
 
-    // The uploaded video's real duration is the source of truth. The selected
-    // duration remains the fallback when there is no video.
-    const realVideoDuration = await getUploadedVideoDuration();
-    const targetDuration = realVideoDuration > 0 ? Math.max(1, Math.min(300, realVideoDuration)) : Math.max(15, Number(state.duration) || 15);
-    state.duration = targetDuration;
-    if (realVideoDuration > 0) {
-      log(`⏱ مدت واقعی ویدئو ${formatVideoTime(realVideoDuration)} است؛ سناریو دقیقاً برای همین زمان تنظیم می‌شود.`, "success");
-      $("#durationHint").textContent = `مدت واقعی ویدئو: ${formatVideoTime(realVideoDuration)} · مبنای سناریو و رندر`;
+    // Stage 01 — input. Video analysis is intentionally removed from the production path.
+    setStage(0);
+    setProgress(8, "ورودی", "رسانه‌ها و سناریوی تو آماده شدند؛ تحلیل ویدئو در این نسخه انجام نمی‌شود.");
+    log(`شروع ساخت «${brand}» با ${state.assets.length} رسانه و سناریوی اختصاصی کاربر.`, "success");
+    if (state.assets.length) log(t("mediaReady"), "success");
+    else log(t("noMedia"), "warning");
+    await wait(180);
+    const uploadedVideoDuration = await getUploadedVideoDuration();
+    const productionDuration = uploadedVideoDuration > 0
+      ? Math.max(15, Math.min(300, Math.round(uploadedVideoDuration)))
+      : Math.max(15, Number(state.duration) || 15);
+    const durationSource = uploadedVideoDuration > 0 ? "مدت ویدئوی آپلودشده" : "مدت انتخاب‌شده";
+    if (uploadedVideoDuration > 0) {
+      log(`🎯 مدت هدف از خود ویدئو گرفته شد: ${Math.round(uploadedVideoDuration)} ثانیه. سناریو دقیقاً با همین زمان تنظیم می‌شود.`, "success");
     }
 
-    setStage(0, "done"); setStage(1); setProgress(22, "تنظیم سناریو", "AIهای متنی همزمان سناریوی شما را کوتاه یا کامل می‌کنند تا با ویدئو هماهنگ شود.");
-    const targetWords = targetWordsForDuration(targetDuration);
-    const fitPromise = api("/api/ai/work-pool", {
-      phase: "fit",
-      brand,
-      description: "",
-      customScript,
-      language: state.language,
-      duration: targetDuration,
-      targetWords,
-      analysis: { summary: "", facts: [], scenes: [], script: customScript }
-    }, 30000);
+    // Stage 02 — AI script editor. The user's script is the source of truth.
+    // AI only repairs, expands or compresses it to match the selected duration.
+    setStage(0, "done");
+    setStage(1);
+    const targetWords = targetWordsForDuration(productionDuration);
+    setProgress(20, "تنظیم سناریو", `AI سناریوی تو را برای ${Math.round(productionDuration)} ثانیه تنظیم می‌کند...`);
+    log(`🤝 سناریوی تو به تیم AI تحویل شد؛ هدف حدود ${targetWords} کلمه برای ${Math.round(productionDuration)} ثانیه (${durationSource}).`, "info");
 
-    let j;
+    let scriptResult = null;
     try {
-      const fitted = await fitPromise;
-      if (!fitted?.script) throw new Error("AI سناریوی تنظیم‌شده برنگرداند.");
-      j = { script: String(fitted.script).trim(), fallback: false, provider: fitted.provider || "ai-team" };
-      log(`✓ سناریو توسط تیم AI برای ${formatVideoTime(targetDuration)} تنظیم شد.`, "success");
-    } catch (e) {
-      // A deterministic local adjustment is safer than silently dropping the user's text.
-      // It is only used when every configured text provider fails.
-      j = { script: customScript, fallback: true, provider: "user" };
-      log(`⚠️ AI تنظیم سناریو پاسخ نداد؛ متن اصلی حفظ شد تا تبلیغ متوقف نشود. ${String(e?.message || e)}`, "warning");
+      scriptResult = await api("/api/ai/work-pool", {
+        brand,
+        description: desc,
+        customScript,
+        scriptMode: "hybrid",
+        language: state.language,
+        duration: productionDuration,
+        targetWords,
+        phase: "script",
+        analysis: { summary: "", facts: [], scenes: [], script: "" }
+      }, 20000);
+    } catch (err) {
+      log(`AI تنظیم سناریو در دسترس نبود؛ متن اصلی تو بدون توقف استفاده می‌شود. ${String(err?.message || err)}`, "warning");
     }
 
-    state.script = j.script || customScript;
-    $("#scriptEditor").value = state.script; $("#scriptEditor").disabled = false; $("#editScript").disabled = false;
-    updateScriptMeta(state.script, j.provider || "user");
-    const expectedWords = targetWordsForDuration(targetDuration);
-    const actualWords = state.script.trim().split(/\s+/).filter(Boolean).length;
-    log(`${actualWords} کلمه برای ویدئوی ${formatVideoTime(targetDuration)} آماده شد؛ هدف تقریبی ${expectedWords} کلمه است.`, actualWords >= Math.round(expectedWords * 0.72) ? "success" : "info");
+    state.script = String(scriptResult?.script || customScript).trim();
+    if (!state.script) throw new Error("سناریو خالی است.");
+    $("#scriptEditor").value = state.script;
+    $("#scriptEditor").disabled = false;
+    $("#editScript").disabled = false;
+    updateScriptMeta(state.script, scriptResult?.provider || "user + AI");
 
-    setStage(1, "done"); setProgress(40, "سناریو آماده", "سناریو با مدت واقعی ویدئو هماهنگ شد.");
-    setStage(2); const stopVoiceProgress = animateProgress(42, 50, 120000, "گویندگی", t("voice"));
-    log("مرحله گویندگی شروع شد؛ درخواست صدا ارسال می‌شود...");
+    const actualWords = state.script.split(/\s+/).filter(Boolean).length;
+    log(`سناریوی نهایی: ${actualWords} کلمه؛ هدف تقریبی ${targetWords} کلمه.`, "success");
+    log(actualWords < Math.round(targetWords * 0.68)
+      ? "⚠️ سناریو هنوز کوتاه است؛ در صورت دسترسی AI، نسخه نهایی دوباره تنظیم می‌شود."
+      : "✓ سناریو برای زمان انتخاب‌شده آماده شد.", actualWords < Math.round(targetWords * 0.68) ? "warning" : "success");
+    state.duration = productionDuration;
+    const durationValue = String(Math.round(productionDuration));
+    if ($("#duration") && !Array.from($("#duration").options).some(o => o.value === durationValue)) {
+      const option = document.createElement("option");
+      option.value = durationValue;
+      option.textContent = `${durationValue} ثانیه · ویدئوی من`;
+      $("#duration").appendChild(option);
+    }
+    $("#duration").value = durationValue;
+    setStage(1, "done");
+    setProgress(38, "سناریو آماده", `سناریوی تو برای ${Math.round(productionDuration)} ثانیه تنظیم شد.`);
+
+    // Production planning runs while TTS is being generated.
+    const productionPlanPromise = api("/api/ai/work-pool", {
+      brand, description: desc, language: state.language, duration: productionDuration,
+      targetWords, phase: "plan", script: state.script,
+      analysis: { summary: "", facts: [], scenes: [], script: state.script }
+    }, 120000).then(plan => {
+      state.aiProductionPlan = plan?.plan || null;
+      if (Array.isArray(plan?.providers)) log(`🎯 برنامه صحنه و کنترل کیفیت با همکاری ${plan.providers.join(" + ")} آماده شد.`, "success");
+      return plan;
+    }).catch(err => {
+      log(`برنامه‌ریزی AI کامل نشد؛ رندر با اطلاعات موجود ادامه پیدا می‌کند. ${String(err?.message || err)}`, "info");
+      return null;
+    });
+
+    // Stage 03 — voice.
+    setStage(2);
+    setProgress(42, "گویندگی", t("voice"));
+    log("🎙 ساخت گویندگی برای سناریوی نهایی شروع شد...", "info");
+    const stopVoiceProgress = animateProgress(42, 50, 90000, "گویندگی", t("voice"));
     const voice = await getVoice();
     stopVoiceProgress();
     if (!voice) {
-      setStage(2, "error"); setProgress(50, "گویندگی ناموفق بود", "اتصال ElevenLabs یا سهمیه حساب را بررسی کن و دوباره تلاش کن.");
-      $("#renderBtn").disabled = true; state.generated = false; $("#overallState").textContent = "● نیاز به بازسازی گویندگی";
-      log("ویدئو بدون گویندگی ساخته نمی‌شود تا خروجی ناقص تحویل نشود.", "error"); return;
+      setStage(2, "error");
+      setProgress(50, "گویندگی ناموفق بود", "اتصال ElevenLabs را بررسی کن و دوباره «ساخت ویدئو» را بزن.");
+      $("#renderBtn").disabled = true;
+      state.generated = false;
+      $("#overallState").textContent = "● نیاز به بازسازی گویندگی";
+      log("ویدئو بدون گویندگی ساخته نمی‌شود.", "error");
+      return;
     }
-    setStage(2, "done"); setProgress(52, "گویندگی آماده", t("voiceReady"));
+    setStage(2, "done");
+    setProgress(54, "گویندگی آماده", t("voiceReady"));
 
-    setStage(3); setProgress(55, "صحنه‌ها", "رسانه‌ها و سناریوی نهایی برای رندر چیده می‌شوند...");
-    await wait(250); setStage(3, "done"); setProgress(62, "صحنه‌ها آماده", "سناریو و گویندگی آماده‌اند؛ رندر نهایی شروع می‌شود.");
+    // Stage 04 — scenes. No video understanding/analysis is used.
+    setStage(3);
+    setProgress(58, "صحنه‌ها", "رسانه‌های انتخاب‌شده با سناریوی نهایی هماهنگ می‌شوند...");
+    const plan = await Promise.race([productionPlanPromise, wait(900).then(() => null)]);
+    if (plan?.plan?.scenes?.length) log(`✓ ${plan.plan.scenes.length} پیشنهاد صحنه از تیم AI آماده شد.`, "success");
+    await wait(220);
+    setStage(3, "done");
+    setProgress(64, "صحنه‌ها آماده", "سناریو و گویندگی آماده‌اند؛ رندر خودکار شروع می‌شود.");
 
-    if (state.script && state.voiceBlob?.size) {
-      $("#renderBtn").disabled = false; state.generated = true; $("#overallState").textContent = "● رندر خودکار شروع شد";
-      log("✓ سناریو و گویندگی آماده‌اند؛ رندر نهایی بدون کلیک دوم شروع می‌شود.", "success");
-      await performRender(true);
-    } else throw new Error("سناریو یا فایل گویندگی برای رندر نهایی آماده نیست.");
+    // Stage 05/06 — render automatically. User never needs a second button.
+    if (!state.script || !state.voiceBlob?.size) throw new Error("سناریو یا گویندگی برای رندر آماده نیست.");
+    $("#renderBtn").disabled = false;
+    state.generated = true;
+    $("#overallState").textContent = "● رندر خودکار";
+    await performRender(true);
   } catch (e) {
-    const msg = String(e?.message || e);
-    $("#overallState").textContent = "● خطا";
-    setProgress(0, "ساخت ناموفق بود", msg);
-    log(`ساخت تبلیغ متوقف شد: ${msg}`, "error");
+    const detail = String(e?.message || e || "خطای نامشخص");
+    setProgress(Math.min(98, Number($("#progressPercent")?.textContent?.replace("%", "")) || 0), "ساخت ناموفق", detail);
+    log(`❌ ساخت ویدئو متوقف شد: ${detail}`, "error");
+    $("#overallState").textContent = "● خطا در ساخت";
   } finally {
-    state.busy = false; $("#scriptBtn").disabled = false;
+    stopConveyorWatchdog();
+    state.busy = false;
+    $("#scriptBtn").disabled = false;
   }
 };
 
@@ -1460,24 +1511,36 @@ $("#downloadBtn").onclick = () => {
 };
 
 $("#rerenderBtn").onclick = () => $("#renderBtn").click();
-$("#newBtn").onclick = () => {
-  ["#brand"].forEach(s => { const el=$(s); if (el) el.value=""; });
-  const cs=$("#customScript"); if (cs) cs.value="";
-  state.assets=[]; state.script=""; state.customScript=""; state.scriptMode="hybrid"; state.buildMode="manual"; state.activeView="preview"; state.voiceBlob=null; state.duration=15;
-  $("#assets").innerHTML=`<span class="asset-empty">هنوز فایلی اضافه نشده</span>`;
-  $("#scriptEditor").value=""; $("#scriptEditor").disabled=true; $("#editScript").disabled=true;
-  $$(".view-tab").forEach(x=>x.classList.toggle("active",x.dataset.view==="preview"));
-  $$(".workspace-panel").forEach(x=>{x.hidden=x.dataset.workspace!=="preview";});
-  $("#viewState").textContent="استودیو";
-  $("#stage").innerHTML=`<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی نهایی را می‌بینی.</small></div>`;
-  updateVideoDurationHint(); resetPipeline();
-};
-
+$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "hybrid"; state.buildMode = "manual"; state.activeView = "preview"; state.voiceBlob = null; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#scriptEditor").disabled = true; $("#editScript").disabled = true; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی نهایی را می‌بینی.</small></div>`; resetPipeline(); };
 $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line muted"><span>●</span> منتظر عملیات بعدی...</div>`; };
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
 $("#scriptMore").onclick = () => { const box = $("#scriptEditor"); const details = $(".script-details"); details.open = true; box.classList.toggle("expanded"); $("#scriptMore").textContent = box.classList.contains("expanded") ? "کمتر" : "بیشتر"; if (box.classList.contains("expanded")) { box.style.height = "auto"; box.style.height = `${Math.max(180, box.scrollHeight)}px`; } else box.style.height = "82px"; };
 $("#scriptEditor").oninput = e => { if (e.target.classList.contains("expanded")) { e.target.style.height = "auto"; e.target.style.height = `${e.target.scrollHeight}px`; } state.script = e.target.value; state.voiceBlob = null; state.generated = false; $("#renderBtn").disabled = true; updateScriptMeta(state.script, "ویرایش کاربر"); log("متن سناریو تغییر کرد؛ برای جلوگیری از صدای قدیمی، گویندگی باید دوباره ساخته شود.", "info"); };
 $("#helpBtn").onclick = () => alert("۱) اطلاعات محصول را وارد کن\n۲) عکس/ویدئو اضافه کن\n۳) ساخت تبلیغ با AI را بزن\n۴) پس از آماده‌شدن سناریو و صدا، ساخت ویدئو را بزن\n۵) در پایان دانلود کن.");
+
+async function getUploadedVideoDuration() {
+  const videos = state.assets.filter(isVideoFile);
+  if (!videos.length) return 0;
+  const durations = await Promise.all(videos.map(file => new Promise(resolve => {
+    const url = URL.createObjectURL(file);
+    const el = document.createElement("video");
+    let done = false;
+    const finish = value => {
+      if (done) return;
+      done = true;
+      URL.revokeObjectURL(url);
+      el.removeAttribute("src");
+      try { el.load(); } catch (_) {}
+      resolve(Number.isFinite(value) && value > 0 ? value : 0);
+    };
+    el.preload = "metadata";
+    el.onloadedmetadata = () => finish(el.duration);
+    el.onerror = () => finish(0);
+    setTimeout(() => finish(0), 6000);
+    el.src = url;
+  })));
+  return Math.max(...durations, 0);
+}
 
 function targetWordsForDuration(seconds) {
   const sec = Math.max(15, Number(seconds) || 15);
