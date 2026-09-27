@@ -996,147 +996,204 @@ async function tts(request, env) {
     const b = await request.json();
     const text = normalizeTtsText(b.text);
     if (!text) return json({ audio: null, fallback: true, error: 'text_required' }, 400);
-    if (!env.ELEVENLABS_API_KEY) return json({ audio: null, fallback: true, error: 'elevenlabs_missing_api_key' }, 503);
 
     const language = String(b.language || 'en').toLowerCase();
-    // ElevenLabs currently supports Persian and Pashto in Eleven v3, while
-    // Flash v2.5 / Multilingual v2 do not list those languages. For the other
-    // supported languages, Flash v2.5 is the fast/low-latency path.
-    const v3Only = language === 'fa' || language === 'ps';
-    const models = v3Only
-      ? [{ id: 'eleven_v3', maxChars: 4200 }]
-      : [{ id: 'eleven_flash_v2_5', maxChars: 12000 }, { id: 'eleven_v3', maxChars: 4200 }];
+    const errors = [];
 
-    const configuredVoice = env.ELEVENLABS_VOICE_ID || '';
-    const voices = [...new Set([configuredVoice, 'JBFqnCBsd6RMkjVDRZzb'].filter(Boolean))];
-    let lastError = null;
+    // 1) ElevenLabs remains the primary voice provider.
+    if (env.ELEVENLABS_API_KEY) {
+      const v3Only = language === 'fa' || language === 'ps';
+      const models = v3Only
+        ? [{ id: 'eleven_v3', maxChars: 4200 }]
+        : [{ id: 'eleven_flash_v2_5', maxChars: 12000 }, { id: 'eleven_v3', maxChars: 4200 }];
+      const configuredVoice = env.ELEVENLABS_VOICE_ID || '';
+      const voices = [...new Set([configuredVoice, 'JBFqnCBsd6RMkjVDRZzb'].filter(Boolean))];
 
-    for (const voice of voices) {
-      for (const model of models) {
-        const chunks = splitTtsText(text, model.maxChars);
-        const parts = [];
-        let failed = false;
-
-        // Do chunks sequentially. Parallel TTS calls can hit ElevenLabs
-        // concurrency limits and can make a long request appear stuck.
-        for (let i = 0; i < chunks.length; i++) {
-          const result = await elevenLabsTTSWithRetry(
-            env.ELEVENLABS_API_KEY,
-            voice,
-            model.id,
-            chunks[i],
-            language
-          );
-          if (!result.ok) {
-            lastError = result;
-            failed = true;
-            break;
+      let lastError = null;
+      for (const voice of voices) {
+        for (const model of models) {
+          const chunks = splitTtsText(text, model.maxChars);
+          const parts = [];
+          let failed = false;
+          for (let i = 0; i < chunks.length; i++) {
+            const result = await elevenLabsTTSWithRetry(env.ELEVENLABS_API_KEY, voice, model.id, chunks[i], language);
+            if (!result.ok) {
+              lastError = result;
+              failed = true;
+              break;
+            }
+            parts.push(result.audio);
           }
-          parts.push(result.audio);
+          if (!failed && parts.length) {
+            return json({
+              audio: parts.length === 1 ? parts[0] : null,
+              audioParts: parts.length > 1 ? parts : undefined,
+              mime: 'audio/mpeg',
+              fallback: false,
+              provider: 'elevenlabs',
+              model: model.id,
+              voice,
+              chunks: parts.length,
+              characters: text.length
+            });
+          }
+          if ([401, 402, 403].includes(lastError?.status)) break;
         }
-
-        if (!failed && parts.length) {
-          return json({
-            audio: parts.length === 1 ? parts[0] : null,
-            audioParts: parts.length > 1 ? parts : undefined,
-            mime: 'audio/mpeg',
-            fallback: false,
-            provider: 'elevenlabs',
-            model: model.id,
-            voice,
-            chunks: parts.length,
-            characters: text.length
-          });
-        }
-
-        // Auth/quota/permission errors won't be fixed by changing models.
         if ([401, 402, 403].includes(lastError?.status)) break;
       }
-      if ([401, 402, 403].includes(lastError?.status)) break;
+      if (lastError) errors.push({ provider: 'elevenlabs', status: lastError.status || 502, code: lastError.code || 'tts_failed', detail: lastError.message || '' });
+    } else {
+      errors.push({ provider: 'elevenlabs', status: 503, code: 'missing_api_key', detail: 'ELEVENLABS_API_KEY is not configured.' });
     }
 
-    // ElevenLabs can legitimately fail because the account quota is exhausted.
-    // Do not stop the whole video pipeline in that case: Cloudflare AI has a
-    // server-side TTS path and can generate the narration without another key.
+    // 2) Gemini 3.8 Flash-Lite TTS: multilingual fallback using the existing
+    // GEMINI_API_KEY. It explicitly supports Persian (Afghanistan) and Southern
+    // Pashto, and returns standard WAV audio.
+    if (env.GEMINI_API_KEY) {
+      const result = await geminiTtsFallback(env.GEMINI_API_KEY, text, language);
+      if (result.ok) return json(result.data);
+      errors.push({ provider: 'gemini-tts', status: result.status || 502, code: result.code || 'gemini_tts_failed', detail: result.detail || '' });
+    }
+
+    // 3) OpenRouter TTS fallback. The existing OPENROUTER_API_KEY can route to
+    // Google's current Gemini 3.8 Flash-Lite TTS without another secret.
+    if (env.OPENROUTER_API_KEY) {
+      const result = await openRouterTtsFallback(env.OPENROUTER_API_KEY, text, language);
+      if (result.ok) return json(result.data);
+      errors.push({ provider: 'openrouter-tts', status: result.status || 502, code: result.code || 'openrouter_tts_failed', detail: result.detail || '' });
+    }
+
+    // 4) Cloudflare Workers AI last resort. This uses the existing AI binding;
+    // no additional secret is required. If the selected language is unsupported,
+    // the provider simply fails and the detailed provider list is returned.
     if (env.AI) {
-      const fallback = await cloudflareTtsFallback(env.AI, text, language);
-      if (fallback?.audioParts?.length) {
-        return json({
-          audio: fallback.audioParts.length === 1 ? fallback.audioParts[0] : null,
-          audioParts: fallback.audioParts.length > 1 ? fallback.audioParts : undefined,
-          mime: fallback.mime || 'audio/wav',
-          fallback: true,
-          provider: fallback.provider,
-          model: fallback.model,
-          chunks: fallback.audioParts.length,
-          characters: text.length,
-          elevenlabsError: lastError?.code || 'elevenlabs_request_failed',
-          elevenlabsDetail: lastError?.message || ''
-        });
-      }
+      const result = await cloudflareTtsFallback(env.AI, text, language);
+      if (result.ok) return json(result.data);
+      errors.push({ provider: 'cloudflare-tts', status: result.status || 502, code: result.code || 'cloudflare_tts_failed', detail: result.detail || '' });
     }
 
+    const quota = errors.find(e => e.provider === 'elevenlabs' && [402, 429].includes(e.status));
     return json({
       audio: null,
       fallback: true,
-      error: lastError?.code || 'elevenlabs_request_failed',
-      detail: lastError?.message || 'ElevenLabs could not generate the requested speech.',
-      status: lastError?.status || 422,
-      requestId: lastError?.requestId || null,
+      error: quota ? 'elevenlabs_quota_exhausted_all_fallbacks_failed' : 'all_tts_providers_failed',
+      detail: quota
+        ? 'اعتبار ElevenLabs کافی نیست؛ مسیرهای جایگزین گویندگی نیز موفق نشدند.'
+        : 'هیچ سرویس گویندگی فعال نتوانست صدا تولید کند.',
+      providers: errors,
       characters: text.length
-    }, lastError?.status === 429 ? 429 : 502);
+    }, 502);
   } catch (e) {
     return json({ audio: null, fallback: true, error: 'tts_server_error', detail: String(e?.message || e) }, 500);
   }
 }
 
-async function cloudflareTtsFallback(ai, text, language) {
-  const chunks = splitTtsText(text, 9000);
-  const parts = [];
-
-  // Gemini 3.1 Flash TTS supports Persian (including Afghanistan) and Pashto,
-  // and returns WAV audio. It is the first Cloudflare fallback because it
-  // matches the languages used by AD Maker AI particularly well.
+async function geminiTtsFallback(apiKey, text, language) {
   try {
+    const chunks = splitTtsText(text, 3500);
+    const parts = [];
     for (const chunk of chunks) {
-      const input = {
-        text: chunk,
-        voice: language === 'fa' || language === 'ps' ? 'Kore' : 'Charon',
-        temperature: 0.35,
-        maxOutputTokens: 4096
-      };
-      const result = await ai.run('google/gemini-3.1-flash-tts', input);
-      const dataUrl = String(result?.audio || '');
-      const base64 = dataUrl.includes(',') ? dataUrl.split(',').slice(1).join(',') : dataUrl;
-      if (!base64) throw new Error('Gemini TTS فایل صوتی برنگرداند.');
-      parts.push(base64);
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+        method: 'POST',
+        headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gemini-3.8-flash-lite-tts',
+          input: [{
+            type: 'user_input',
+            content: [{
+              type: 'text',
+              text: chunk,
+              annotations: [{ type: 'speech_metadata', style: 'warm, natural, clear, professional advertising narration' }]
+            }]
+          }],
+          response_format: { type: 'audio', mime_type: 'audio/wav' },
+          generation_config: { speech_config: [{ voice: 'Kore' }] }
+        })
+      });
+      if (!response.ok) return { ok: false, status: response.status, code: 'gemini_tts_http_error', detail: await safeGoogleError(response) };
+      const data = await response.json();
+      const audio = extractInteractionAudio(data);
+      if (!audio) return { ok: false, status: 502, code: 'gemini_tts_audio_missing', detail: 'Gemini TTS پاسخ صوتی برنگرداند.' };
+      parts.push(audio);
     }
-    return { ok: true, provider: 'cloudflare-ai', model: 'google/gemini-3.1-flash-tts', mime: 'audio/wav', audioParts: parts };
-  } catch (geminiError) {
-    // Secondary Cloudflare fallback. Inworld TTS is multilingual and returns
-    // MP3 through a short-lived R2 URL.
-    try {
-      const parts2 = [];
-      const voice = language === 'fa' || language === 'ps' ? 'Amina' : 'Dennis';
-      for (const chunk of chunks) {
-        const result = await ai.run('inworld/tts-2', {
-          output_format: 'mp3',
-          sample_rate: 44100,
-          temperature: 0.7,
-          text: chunk,
-          timestamp_type: 'none',
-          voice_id: voice
-        });
-        const url = String(result?.audio || result?.result?.audio || '');
-        if (!url) throw new Error('Inworld TTS فایل صوتی برنگرداند.');
-        const r = await fetch(url);
-        if (!r.ok) throw new Error(`Inworld TTS HTTP ${r.status}`);
-        parts2.push(arrayBufferToBase64(await r.arrayBuffer()));
+    return {
+      ok: true,
+      data: {
+        audio: parts.length === 1 ? parts[0] : null,
+        audioParts: parts.length > 1 ? parts : undefined,
+        mime: 'audio/wav', fallback: true, provider: 'gemini-tts', model: 'gemini-3.8-flash-lite-tts', chunks: parts.length, characters: text.length
       }
-      return { ok: true, provider: 'cloudflare-ai', model: 'inworld/tts-2', mime: 'audio/mpeg', audioParts: parts2 };
-    } catch (inworldError) {
-      return { ok: false, error: `${String(geminiError?.message || geminiError)} | ${String(inworldError?.message || inworldError)}` };
+    };
+  } catch (e) {
+    return { ok: false, status: 503, code: 'gemini_tts_exception', detail: String(e?.message || e) };
+  }
+}
+
+function extractInteractionAudio(data) {
+  const direct = data?.output_audio?.data;
+  if (direct) return direct;
+  const steps = Array.isArray(data?.steps) ? data.steps : [];
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const content = Array.isArray(steps[i]?.content) ? steps[i].content : [];
+    for (let j = content.length - 1; j >= 0; j--) {
+      if (content[j]?.type === 'audio' && content[j]?.data) return content[j].data;
     }
+  }
+  return null;
+}
+
+async function openRouterTtsFallback(apiKey, text, language) {
+  try {
+    const chunks = splitTtsText(text, 3500);
+    const parts = [];
+    for (const chunk of chunks) {
+      const response = await fetch('https://openrouter.ai/api/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          Accept: 'audio/mpeg'
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-3.8-flash-lite-tts',
+          input: chunk,
+          voice: 'Kore',
+          response_format: 'mp3'
+        })
+      });
+      if (!response.ok) {
+        let detail = '';
+        try { detail = JSON.stringify(await response.json()); } catch (_) { detail = await response.text().catch(() => ''); }
+        return { ok: false, status: response.status, code: 'openrouter_tts_http_error', detail };
+      }
+      parts.push(arrayBufferToBase64(await response.arrayBuffer()));
+    }
+    return {
+      ok: true,
+      data: {
+        audio: parts.length === 1 ? parts[0] : null,
+        audioParts: parts.length > 1 ? parts : undefined,
+        mime: 'audio/mpeg', fallback: true, provider: 'openrouter-tts', model: 'google/gemini-3.8-flash-lite-tts', chunks: parts.length, characters: text.length
+      }
+    };
+  } catch (e) {
+    return { ok: false, status: 503, code: 'openrouter_tts_exception', detail: String(e?.message || e) };
+  }
+}
+
+async function cloudflareTtsFallback(ai, text, language) {
+  try {
+    const result = await ai.run('@cf/myshell-ai/melotts', { prompt: text, lang: language }, { returnRawResponse: true });
+    if (result instanceof Response) {
+      if (!result.ok) return { ok: false, status: result.status, code: 'cloudflare_tts_http_error', detail: await result.text().catch(() => '') };
+      const mime = result.headers.get('content-type') || 'audio/mpeg';
+      return { ok: true, data: { audio: arrayBufferToBase64(await result.arrayBuffer()), mime, fallback: true, provider: 'cloudflare-tts', model: '@cf/myshell-ai/melotts', chunks: 1, characters: text.length } };
+    }
+    const data = result?.audio || result?.result?.audio;
+    if (data) return { ok: true, data: { audio: typeof data === 'string' ? data : arrayBufferToBase64(data), mime: 'audio/mpeg', fallback: true, provider: 'cloudflare-tts', model: '@cf/myshell-ai/melotts', chunks: 1, characters: text.length } };
+    return { ok: false, status: 502, code: 'cloudflare_tts_audio_missing', detail: 'Cloudflare Workers AI پاسخ صوتی برنگرداند.' };
+  } catch (e) {
+    return { ok: false, status: 503, code: 'cloudflare_tts_exception', detail: String(e?.message || e) };
   }
 }
 
