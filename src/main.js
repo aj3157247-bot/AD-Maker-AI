@@ -170,6 +170,7 @@ function renderShell() {
               <button type="button" class="subtitle-opt active" data-subtitles="on">با زیرنویس</button>
               <button type="button" class="subtitle-opt" data-subtitles="off">بدون زیرنویس</button>
             </div>
+            <div id="subtitlePreview" class="subtitle-preview">نمونه زیرنویس</div>
             <div id="subtitleColors" class="subtitle-colors">
               <button type="button" class="sub-color active" data-sub-color="#ffffff" style="background:#ffffff" aria-label="سفید"></button>
               <button type="button" class="sub-color" data-sub-color="#ffd60a" style="background:#ffd60a" aria-label="زرد"></button>
@@ -1115,6 +1116,7 @@ function bindSubtitleControls() {
     $$(".subtitle-opt").forEach(x => x.classList.toggle("active", (x.dataset.subtitles === "on") === state.subtitlesOn));
     $$(".sub-color").forEach(x => x.classList.toggle("active", x.dataset.subColor === state.subtitleColor));
     const box = $("#subtitleColors"); if (box) box.hidden = !state.subtitlesOn;
+    const pv = $("#subtitlePreview"); if (pv) { pv.hidden = !state.subtitlesOn; pv.style.color = state.subtitleColor; }
     const label = $("#subtitleState"); if (label) label.textContent = state.subtitlesOn ? "با زیرنویس" : "بدون زیرنویس";
   };
   $$(".subtitle-opt").forEach(b => { b.onclick = e => { e.preventDefault(); state.subtitlesOn = b.dataset.subtitles === "on"; apply(); }; });
@@ -1665,6 +1667,15 @@ function targetWordsForDuration(seconds) {
 
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// Keep source videos inside the DOM (tiny + invisible) so the browser decodes every frame smoothly while recording.
+function attachHiddenVideo(v) {
+  try {
+    v.muted = true; v.playsInline = true; v.setAttribute("playsinline", ""); v.setAttribute("muted", "");
+    Object.assign(v.style, { position: "fixed", left: "0", bottom: "0", width: "2px", height: "2px", opacity: "0.01", pointerEvents: "none", zIndex: "-1" });
+    document.body.appendChild(v);
+  } catch (_) {}
+}
+
 async function renderVideo(voiceBlob) {
   if (!voiceBlob || !voiceBlob.size) throw new Error("گویندگی صوتی آماده نیست؛ ابتدا گویندگی AI را با موفقیت بساز.");
   const ratio = outputRatio(state.platform);
@@ -1688,6 +1699,7 @@ async function renderVideo(voiceBlob) {
       log(`تصویر «${f.name}» آماده شد.`, "success");
     } else if (prepared.kind === "video") {
       const v = prepared.element;
+      attachHiddenVideo(v);
       media.push({ type: "video", el: v, name: f.name, duration: Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 1 });
       log(`ویدئوی «${f.name}» آماده شد${prepared.converted ? " (تبدیل خودکار)" : ""}.`, "success");
     } else {
@@ -1771,6 +1783,9 @@ async function renderVideo(voiceBlob) {
     };
 
     let activeVideoScene = -1;
+    let lastProg = -1000;
+    const bgc = document.createElement("canvas"); bgc.width = 36; bgc.height = Math.max(36, Math.round(36 * H / W));
+    const bgx = bgc.getContext("2d");
     const drawFrame = elapsed => {
       const p = Math.min(1, elapsed / total);
       const scene = sceneAt(elapsed);
@@ -1796,12 +1811,24 @@ async function renderVideo(voiceBlob) {
         }
         const ew = el.videoWidth || el.naturalWidth || W;
         const eh = el.videoHeight || el.naturalHeight || H;
-        const cover = Math.max(W / ew, H / eh);
-        const zoom = 1.04 + 0.055 * sceneP;
-        const iw = ew * cover * zoom, ih = eh * cover * zoom;
-        const drift = Math.sin(sceneP * Math.PI) * 12;
         ctx.globalAlpha = 1;
-        ctx.drawImage(el, (W - iw) / 2 + drift, (H - ih) / 2, iw, ih);
+        if (item.type === "video" && el.videoWidth) {
+          // Videos: show the WHOLE frame (no zoom / no crop) over a soft blurred copy of itself.
+          const c0 = Math.max(bgc.width / ew, bgc.height / eh);
+          try { bgx.drawImage(el, (bgc.width - ew * c0) / 2, (bgc.height - eh * c0) / 2, ew * c0, eh * c0); } catch (_) {}
+          ctx.imageSmoothingEnabled = true;
+          ctx.drawImage(bgc, 0, 0, W, H);
+          ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(0, 0, W, H);
+          const fit = Math.min(W / ew, H / eh);
+          const vw = ew * fit, vh = eh * fit;
+          ctx.drawImage(el, (W - vw) / 2, (H - vh) / 2, vw, vh);
+        } else {
+          const cover = Math.max(W / ew, H / eh);
+          const zoom = 1.04 + 0.055 * sceneP;
+          const iw = ew * cover * zoom, ih = eh * cover * zoom;
+          const drift = Math.sin(sceneP * Math.PI) * 12;
+          ctx.drawImage(el, (W - iw) / 2 + drift, (H - ih) / 2, iw, ih);
+        }
       } else {
         const g = ctx.createLinearGradient(0, 0, W, H);
         g.addColorStop(0, state.brandColor); g.addColorStop(1, "#090912");
@@ -1860,7 +1887,7 @@ async function renderVideo(voiceBlob) {
       ctx.fillStyle = state.brandColor; roundRect(ctx, 42, H - 88, (W - 84) * p, 6, 3, state.brandColor, null);
       ctx.fillStyle = "rgba(255,255,255,.72)"; ctx.font = "700 15px Vazirmatn,Arial";
       ctx.fillText(`${Math.round(p * 100)}%`, W / 2, H - 50);
-      setProgress(66 + p * 32, "رندر ویدئو", `${Math.round(p * 100)}٪ از ویدئو ساخته شد`);
+      if (elapsed - lastProg > 300) { lastProg = elapsed; setProgress(66 + p * 32, "رندر ویدئو", `${Math.round(p * 100)}٪ از ویدئو ساخته شد`); }
     };
 
     drawFrame(0);
@@ -1893,7 +1920,7 @@ async function renderVideo(voiceBlob) {
     try { voiceSource?.stop(); } catch (_) {}
     try { musicSource?.stop(); } catch (_) {}
     try { await audioCtx?.close(); } catch (_) {}
-    media.filter(x => x.type === "video").forEach(x => { try { x.el.pause(); } catch (_) {} });
+    media.filter(x => x.type === "video").forEach(x => { try { x.el.pause(); x.el.remove(); } catch (_) {} });
     urls.forEach(u => URL.revokeObjectURL(u));
     for (const u of urlsForPreparedAssets) { try { URL.revokeObjectURL(u); } catch (_) {} }
     urlsForPreparedAssets.clear();
