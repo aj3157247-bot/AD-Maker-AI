@@ -239,3 +239,7 @@ body{font-size:14px;-webkit-text-size-adjust:100%}
   .platform-grid .style-chip span{font-size:11px}
   .video-stage{height:min(64vh,460px)}
 }
+
+/* v93: manual "build video" button removed from UI (video is built automatically); download fills the row */
+#renderBtn{display:none!important}
+.output-actions #downloadBtn{flex:1}
