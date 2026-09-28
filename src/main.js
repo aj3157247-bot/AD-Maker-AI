@@ -22,7 +22,9 @@ const state = {
   videoAnalysisBusy: false,
   videoAnalysisJobActive: false,
   conveyorReleased: false,
-  backgroundVideoAnalysisPromise: null
+  backgroundVideoAnalysisPromise: null,
+  subtitlesOn: true,
+  subtitleColor: "#ffffff"
 };
 
 const $ = (s) => document.querySelector(s);
@@ -160,6 +162,22 @@ function renderShell() {
           <div class="compact-options focus-studio-only">
             <label class="music-drop"><input id="music" type="file" accept="audio/*"><span>♫</span><div><strong>موسیقی پس‌زمینه</strong><small id="musicName">اختیاری</small></div></label>
             <div class="color-row"><input id="brandColor" type="color" value="#7c5cff" aria-label="رنگ برند"><span id="colorHex">#7C5CFF</span></div>
+          </div>
+
+          <div class="field focus-studio-only subtitle-field">
+            <div class="field-title"><label>زیرنویس روی ویدئو</label><span id="subtitleState">با زیرنویس</span></div>
+            <div class="subtitle-toggle">
+              <button type="button" class="subtitle-opt active" data-subtitles="on">با زیرنویس</button>
+              <button type="button" class="subtitle-opt" data-subtitles="off">بدون زیرنویس</button>
+            </div>
+            <div id="subtitleColors" class="subtitle-colors">
+              <button type="button" class="sub-color active" data-sub-color="#ffffff" style="background:#ffffff" aria-label="سفید"></button>
+              <button type="button" class="sub-color" data-sub-color="#ffd60a" style="background:#ffd60a" aria-label="زرد"></button>
+              <button type="button" class="sub-color" data-sub-color="#00e5ff" style="background:#00e5ff" aria-label="آبی"></button>
+              <button type="button" class="sub-color" data-sub-color="#39ff88" style="background:#39ff88" aria-label="سبز"></button>
+              <button type="button" class="sub-color" data-sub-color="#ff4d8d" style="background:#ff4d8d" aria-label="صورتی"></button>
+              <button type="button" class="sub-color" data-sub-color="#ff8a1f" style="background:#ff8a1f" aria-label="نارنجی"></button>
+            </div>
           </div>
 
           <div class="button-row focus-core"><button id="scriptBtn" class="primary big">✦ ساخت سناریوی هوشمند</button><button id="demoBtn" class="secondary demo-btn">نمونه</button></div>
@@ -1092,7 +1110,20 @@ function updateBuildModeUI() {
   if (custom) custom.hidden = !["manual", "hybrid"].includes(state.buildMode);
 }
 
+function bindSubtitleControls() {
+  const apply = () => {
+    $$(".subtitle-opt").forEach(x => x.classList.toggle("active", (x.dataset.subtitles === "on") === state.subtitlesOn));
+    $$(".sub-color").forEach(x => x.classList.toggle("active", x.dataset.subColor === state.subtitleColor));
+    const box = $("#subtitleColors"); if (box) box.hidden = !state.subtitlesOn;
+    const label = $("#subtitleState"); if (label) label.textContent = state.subtitlesOn ? "با زیرنویس" : "بدون زیرنویس";
+  };
+  $$(".subtitle-opt").forEach(b => { b.onclick = e => { e.preventDefault(); state.subtitlesOn = b.dataset.subtitles === "on"; apply(); }; });
+  $$(".sub-color").forEach(b => { b.onclick = e => { e.preventDefault(); state.subtitleColor = b.dataset.subColor; apply(); }; });
+  apply();
+}
+
 function bindChoiceControls() {
+  bindSubtitleControls();
   // Bind directly to each button. This is intentionally not delegated from document:
   // on some Android WebViews/browsers a delegated click can be swallowed when cards
   // contain nested text/inline elements. Direct handlers make every choice reliable.
@@ -1739,6 +1770,7 @@ async function renderVideo(voiceBlob) {
       return { item: media[index], index, progress: Math.min(1, Math.max(0, raw - index)) };
     };
 
+    let activeVideoScene = -1;
     const drawFrame = elapsed => {
       const p = Math.min(1, elapsed / total);
       const scene = sceneAt(elapsed);
@@ -1752,10 +1784,15 @@ async function renderVideo(voiceBlob) {
       if (item?.el) {
         const el = item.el;
         if (item.type === "video") {
-          const duration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : item.duration;
-          const target = Math.min(Math.max(0, sceneP * duration), Math.max(0, duration - 0.05));
-          if (Math.abs((el.currentTime || 0) - target) > 0.18) { try { el.currentTime = target; } catch (_) {} }
-          if (el.paused) el.play().catch(() => {});
+          // Play the clip naturally at normal speed (no per-frame seeking, which made it look like slideshow stills).
+          if (activeVideoScene !== scene.index) {
+            media.forEach(m => { if (m.type === "video" && m.el !== el) { try { m.el.pause(); } catch (_) {} } });
+            activeVideoScene = scene.index;
+            try { el.muted = true; el.loop = true; el.playbackRate = 1; el.currentTime = 0; } catch (_) {}
+            el.play().catch(() => {});
+          } else if (el.paused) {
+            el.play().catch(() => {});
+          }
         }
         const ew = el.videoWidth || el.naturalWidth || W;
         const eh = el.videoHeight || el.naturalHeight || H;
@@ -1796,15 +1833,27 @@ async function renderVideo(voiceBlob) {
       ctx.fillStyle = "rgba(255,255,255,.76)"; ctx.font = "700 16px Vazirmatn,Arial";
       ctx.fillText(`${String(scene.index + 1).padStart(2,"0")} / ${String(sceneCount).padStart(2,"0")}`, state.language === "en" ? W - 42 : 42, 138);
 
-      // Readable glass subtitle card with compact lines.
-      const cardX = 42, cardW = W - 84, cardH = caption ? 238 : 150, cardY = H - 390;
-      roundRect(ctx, cardX, cardY, cardW, cardH, 28, "rgba(8,8,14,.62)", "rgba(255,255,255,.14)");
-      ctx.fillStyle = state.brandColor; roundRect(ctx, cardX + 24, cardY + 24, 8, cardH - 48, 4, state.brandColor, null);
-      ctx.textAlign = "center";
-      ctx.fillStyle = "rgba(255,255,255,.64)"; ctx.font = "700 14px Vazirmatn,Arial";
-      ctx.fillText(styleLabel(), W / 2, cardY + 52);
-      ctx.fillStyle = "#fff"; ctx.font = "800 28px Vazirmatn,Arial";
-      if (caption) wrap(ctx, caption.text, W / 2, cardY + 98, cardW - 78, 42, 4);
+      // Subtitles: no background box, colored text with outline for readability. Can be turned off.
+      if (state.subtitlesOn && caption) {
+        const fontSize = W > H ? 40 : 46, lineH = fontSize * 1.4, maxW = W - 120;
+        ctx.font = `800 ${fontSize}px Vazirmatn,Arial`;
+        ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        const words = caption.text.split(/\s+/), lines = [];
+        let line = "";
+        for (const w of words) {
+          const test = line ? `${line} ${w}` : w;
+          if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = w; } else line = test;
+        }
+        if (line) lines.push(line);
+        const shown = lines.slice(0, 4);
+        const baseY = H - 150 - (shown.length - 1) * lineH;
+        ctx.lineJoin = "round"; ctx.lineWidth = 9; ctx.strokeStyle = "rgba(0,0,0,.92)";
+        ctx.shadowColor = "rgba(0,0,0,.6)"; ctx.shadowBlur = 10;
+        shown.forEach((l, i) => ctx.strokeText(l, W / 2, baseY + i * lineH));
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = state.subtitleColor;
+        shown.forEach((l, i) => ctx.fillText(l, W / 2, baseY + i * lineH));
+      }
 
       // Fine progress rail.
       ctx.fillStyle = "rgba(255,255,255,.18)"; roundRect(ctx, 42, H - 88, W - 84, 6, 3, "rgba(255,255,255,.18)", null);

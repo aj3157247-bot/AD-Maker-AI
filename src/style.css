@@ -104,3 +104,12 @@ body{font-size:14px}.app-shell{width:min(1280px,100%);padding:18px 18px 48px}
 .video-analysis-box,.creation-mode-grid,.build-mode-info{display:none!important}
 .output-actions #renderBtn[hidden]{display:none!important}
 @media(max-width:760px){.compact-nav{margin-bottom:8px}.custom-script-section textarea{min-height:92px}.script-ai-hint{font-size:6.8px}.hero-pills span{font-size:6.8px}}
+
+/* Subtitle options */
+.subtitle-toggle{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.subtitle-opt{padding:12px 10px;border-radius:14px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#fff;font:inherit;font-weight:700;cursor:pointer}
+.subtitle-opt.active{border-color:#7c5cff;background:rgba(124,92,255,.22)}
+.subtitle-colors{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
+.subtitle-colors[hidden]{display:none}
+.sub-color{width:36px;height:36px;border-radius:50%;border:2px solid rgba(255,255,255,.25);cursor:pointer;padding:0}
+.sub-color.active{border-color:#fff;box-shadow:0 0 0 3px rgba(124,92,255,.7)}
