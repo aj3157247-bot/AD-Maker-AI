@@ -425,7 +425,7 @@ async function renderVideoLibrary() {
     rows.forEach(v => {
       const item = [...wrap.querySelectorAll(".library-item")].find(x => x.dataset.id === v.id); if (!item) return;
       const url = URL.createObjectURL(v.blob); libraryObjectUrls.add(url); item.querySelector("video").src = url;
-      item.querySelector(".library-download").onclick = () => downloadBlob(v.blob, `ad-maker-ai-${v.id}.webm`);
+      item.querySelector(".library-download").onclick = () => downloadBlob(v.blob, `ad-maker-ai-${v.id}.${/mp4/i.test(v.blob?.type || "") ? "mp4" : "webm"}`);
       item.querySelector(".library-delete").onclick = async () => { if (confirm("این ویدئو از کتابخانه حذف شود؟")) await deleteLibraryVideo(v.id); };
     });
   } catch (e) {
@@ -1640,7 +1640,7 @@ $("#downloadBtn").onclick = () => {
   const url = URL.createObjectURL(state.lastVideo);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `ad-maker-ai-${Date.now()}.webm`;
+  a.download = `ad-maker-ai-${Date.now()}.${/mp4/i.test(state.lastVideo.type) ? "mp4" : "webm"}`;
   a.rel = "noopener";
   document.body.appendChild(a);
   a.click();
@@ -1753,11 +1753,12 @@ async function renderVideo(voiceBlob) {
     const videoStream = canvas.captureStream(30);
     const tracks = [...videoStream.getVideoTracks(), ...dest.stream.getAudioTracks()];
     const stream = new MediaStream(tracks);
-    const candidates = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+    // MP4 (H.264 + AAC) first: it opens/shares everywhere (WhatsApp, Instagram, Telegram, gallery) and is hardware-encoded on phones.
+    const candidates = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=avc1,mp4a.40.2", "video/mp4", "video/webm;codecs=vp8,opus", "video/webm;codecs=vp9,opus", "video/webm"];
     const mime = candidates.find(x => MediaRecorder.isTypeSupported(x));
     if (!mime) throw new Error("این مرورگر قالب خروجی WebM را پشتیبانی نمی‌کند. آخرین Chrome را امتحان کن.");
 
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 5000000, audioBitsPerSecond: 128000 });
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 });
     const chunks = [];
     const done = new Promise((resolve, reject) => {
       rec.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
@@ -1786,6 +1787,19 @@ async function renderVideo(voiceBlob) {
     let lastProg = -1000;
     const bgc = document.createElement("canvas"); bgc.width = 36; bgc.height = Math.max(36, Math.round(36 * H / W));
     const bgx = bgc.getContext("2d");
+    const overlay = document.createElement("canvas"); overlay.width = W; overlay.height = H;
+    {
+      const ox = overlay.getContext("2d");
+      const top = ox.createLinearGradient(0, 0, 0, H);
+      top.addColorStop(0, hexAlpha(state.brandColor, .52));
+      top.addColorStop(.34, "rgba(4,4,9,.03)");
+      top.addColorStop(.66, "rgba(3,3,8,.16)");
+      top.addColorStop(1, "rgba(2,2,7,.88)");
+      ox.fillStyle = top; ox.fillRect(0, 0, W, H);
+      const vignette = ox.createRadialGradient(W/2, H/2, 260, W/2, H/2, 760);
+      vignette.addColorStop(0, "rgba(0,0,0,0)"); vignette.addColorStop(1, "rgba(0,0,0,.42)");
+      ox.fillStyle = vignette; ox.fillRect(0, 0, W, H);
+    }
     const drawFrame = elapsed => {
       const p = Math.min(1, elapsed / total);
       const scene = sceneAt(elapsed);
@@ -1804,7 +1818,7 @@ async function renderVideo(voiceBlob) {
             media.forEach(m => { if (m.type === "video" && m.el !== el) { try { m.el.pause(); } catch (_) {} } });
             activeVideoScene = scene.index;
             item.enterAt = elapsed; item.mode = "play"; item.lastCT = -1; item.lastCTAt = elapsed;
-            try { el.muted = true; el.loop = true; el.playbackRate = 1; el.currentTime = 0; } catch (_) {}
+            try { el.muted = true; el.loop = true; el.playbackRate = 1; if ((el.currentTime || 0) > 0.1) el.currentTime = 0; } catch (_) {}
             el.play().catch(() => {});
           }
           // Is the browser really playing the clip? (some mobile / in-app browsers silently block play())
@@ -1812,7 +1826,7 @@ async function renderVideo(voiceBlob) {
             if (el.currentTime !== item.lastCT) { item.lastCT = el.currentTime; item.lastCTAt = elapsed; }
             const sinceEnter = elapsed - item.enterAt;
             if (el.paused && sinceEnter > 300) el.play().catch(() => {});
-            if (sinceEnter > 900 && elapsed - item.lastCTAt > 600) {
+            if (sinceEnter > 2500 && elapsed - item.lastCTAt > 1500) {
               item.mode = "seek";
               try { el.pause(); } catch (_) {}
               if (!item.warned) { item.warned = true; log("مرورگر پخش خودکار ویدئو را مسدود کرد؛ ویدئو با روش جایگزین (هم‌زمان‌سازی زمانی) ساخته می‌شود. برای بهترین کیفیت سایت را در Chrome باز کن.", "info"); }
@@ -1850,17 +1864,8 @@ async function renderVideo(voiceBlob) {
         ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
       }
 
-      // Premium cinematic grading: brand-tinted light, vignette and depth.
-      const top = ctx.createLinearGradient(0, 0, 0, H);
-      top.addColorStop(0, hexAlpha(state.brandColor, .52));
-      top.addColorStop(.34, "rgba(4,4,9,.03)");
-      top.addColorStop(.66, "rgba(3,3,8,.16)");
-      top.addColorStop(1, "rgba(2,2,7,.88)");
-      ctx.fillStyle = top; ctx.fillRect(0, 0, W, H);
-
-      const vignette = ctx.createRadialGradient(W/2, H/2, 260, W/2, H/2, 760);
-      vignette.addColorStop(0, "rgba(0,0,0,0)"); vignette.addColorStop(1, "rgba(0,0,0,.42)");
-      ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
+      // Premium cinematic grading (pre-rendered once per video to keep the phone fast).
+      ctx.drawImage(overlay, 0, 0);
 
       ctx.direction = state.language === "en" ? "ltr" : "rtl";
       ctx.textAlign = "center";
@@ -1911,10 +1916,11 @@ async function renderVideo(voiceBlob) {
 
     await new Promise((resolve, reject) => {
       let raf = 0;
+      let lastDraw = -1000;
       const tick = now => {
         try {
           const elapsed = now - start;
-          drawFrame(elapsed);
+          if (elapsed - lastDraw >= 28 || elapsed >= total) { drawFrame(elapsed); lastDraw = elapsed; }
           if (elapsed < total) raf = requestAnimationFrame(tick);
           else {
             cancelAnimationFrame(raf);
