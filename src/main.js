@@ -1799,14 +1799,29 @@ async function renderVideo(voiceBlob) {
       if (item?.el) {
         const el = item.el;
         if (item.type === "video") {
-          // Play the clip naturally at normal speed (no per-frame seeking, which made it look like slideshow stills).
+          const dur = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : item.duration;
           if (activeVideoScene !== scene.index) {
             media.forEach(m => { if (m.type === "video" && m.el !== el) { try { m.el.pause(); } catch (_) {} } });
             activeVideoScene = scene.index;
+            item.enterAt = elapsed; item.mode = "play"; item.lastCT = -1; item.lastCTAt = elapsed;
             try { el.muted = true; el.loop = true; el.playbackRate = 1; el.currentTime = 0; } catch (_) {}
             el.play().catch(() => {});
-          } else if (el.paused) {
-            el.play().catch(() => {});
+          }
+          // Is the browser really playing the clip? (some mobile / in-app browsers silently block play())
+          if (item.mode === "play") {
+            if (el.currentTime !== item.lastCT) { item.lastCT = el.currentTime; item.lastCTAt = elapsed; }
+            const sinceEnter = elapsed - item.enterAt;
+            if (el.paused && sinceEnter > 300) el.play().catch(() => {});
+            if (sinceEnter > 900 && elapsed - item.lastCTAt > 600) {
+              item.mode = "seek";
+              try { el.pause(); } catch (_) {}
+              if (!item.warned) { item.warned = true; log("مرورگر پخش خودکار ویدئو را مسدود کرد؛ ویدئو با روش جایگزین (هم‌زمان‌سازی زمانی) ساخته می‌شود. برای بهترین کیفیت سایت را در Chrome باز کن.", "info"); }
+            }
+          }
+          if (item.mode === "seek") {
+            // Real-time chase: always jump to where the clip SHOULD be right now (normal speed, never stretched).
+            const want = dur > 0.1 ? ((elapsed - item.enterAt) / 1000) % dur : 0;
+            if (!el.seeking && Math.abs((el.currentTime || 0) - want) > 0.04) { try { el.currentTime = Math.min(want, Math.max(0, dur - 0.05)); } catch (_) {} }
           }
         }
         const ew = el.videoWidth || el.naturalWidth || W;
