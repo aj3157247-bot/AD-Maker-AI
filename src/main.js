@@ -425,7 +425,7 @@ async function renderVideoLibrary() {
     rows.forEach(v => {
       const item = [...wrap.querySelectorAll(".library-item")].find(x => x.dataset.id === v.id); if (!item) return;
       const url = URL.createObjectURL(v.blob); libraryObjectUrls.add(url); item.querySelector("video").src = url;
-      item.querySelector(".library-download").onclick = () => downloadBlob(v.blob, `ad-maker-ai-${v.id}.${/mp4/i.test(v.blob?.type || "") ? "mp4" : "webm"}`);
+      item.querySelector(".library-download").onclick = () => downloadBlob(v.blob, `ad-maker-ai-${v.id}.${/mp4/i.test(v.blob?.type || v.mimeType || "") ? "mp4" : "webm"}`);
       item.querySelector(".library-delete").onclick = async () => { if (confirm("این ویدئو از کتابخانه حذف شود؟")) await deleteLibraryVideo(v.id); };
     });
   } catch (e) {
@@ -441,6 +441,110 @@ function downloadBlob(blob, filename) {
 function languageLabel(code) { return ({en:"English",ar:"العربية",tr:"Türkçe",ur:"اردو",hi:"हिन्दी",fa:"فارسی",ps:"پښتو",ru:"Русский",es:"Español",fr:"Français",de:"Deutsch",id:"Bahasa Indonesia",uz:"O‘zbekcha"})[code] || code || "—"; }
 function platformLabel(code) { return ({youtube_short:"YouTube Shorts",youtube:"YouTube",tiktok:"TikTok",instagram_reels:"Instagram Reels",facebook:"Facebook",instagram:"Instagram",linkedin:"LinkedIn",whatsapp:"WhatsApp"})[code] || "تبلیغ"; }
 function outputRatio(code) { return ({youtube:"16:9",instagram:"1:1",facebook:"4:5",linkedin:"1:1",youtube_short:"9:16",tiktok:"9:16",instagram_reels:"9:16",whatsapp:"9:16"})[code] || "9:16"; }
+
+// Repair the WebM container duration. MediaRecorder on Android/Chrome often
+// emits valid playable clusters but omits Segment/Info/Duration; some gallery
+// scanners interpret that as 00:00. Keep the original codec and media packets.
+function repairWebmDurationBytes(input, durationSeconds) {
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  if (!bytes.length || !(durationSeconds > 0)) return null;
+  const vintLength = first => {
+    for (let n = 1; n <= 8; n++) if (first & (1 << (8 - n))) return n;
+    return 0;
+  };
+  const readElement = (data, offset, limit) => {
+    if (offset >= limit) return null;
+    const idLen = vintLength(data[offset]);
+    if (!idLen || idLen > 4 || offset + idLen >= limit) return null;
+    let id = 0;
+    for (let i = 0; i < idLen; i++) id = id * 256 + data[offset + i];
+    const sizeLen = vintLength(data[offset + idLen]);
+    if (!sizeLen || sizeLen > 8 || offset + idLen + sizeLen > limit) return null;
+    let size = data[offset + idLen] & (0xff >>> sizeLen);
+    for (let i = 1; i < sizeLen; i++) size = size * 256 + data[offset + idLen + i];
+    const unknown = size === Math.pow(2, 7 * sizeLen) - 1;
+    const dataStart = offset + idLen + sizeLen;
+    const dataEnd = unknown ? limit : dataStart + size;
+    if (dataEnd > limit || dataEnd < dataStart) return null;
+    return { id, start: offset, idLen, dataStart, dataEnd, unknown };
+  };
+  const encodeSize = size => {
+    for (let n = 1; n <= 8; n++) {
+      if (size < Math.pow(2, 7 * n) - 1) {
+        const out = new Uint8Array(n); let v = size;
+        for (let i = n - 1; i >= 0; i--) { out[i] = v & 255; v = Math.floor(v / 256); }
+        out[0] |= 1 << (8 - n); return out;
+      }
+    }
+    throw new Error('WebM segment too large');
+  };
+  const concat = parts => {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let at = 0;
+    for (const part of parts) { out.set(part, at); at += part.length; }
+    return out;
+  };
+  const raw = el => bytes.subarray(el.start, el.dataEnd);
+  const element = (id, payload) => concat([id, encodeSize(payload.length), payload]);
+  try {
+    let segment = null;
+    for (let at = 0; at < bytes.length;) {
+      const el = readElement(bytes, at, bytes.length);
+      if (!el) break;
+      if (el.id === 0x18538067) { segment = el; break; }
+      if (el.dataEnd <= at) break;
+      at = el.dataEnd;
+    }
+    if (!segment) return null;
+    let info = null; const segmentChildren = [];
+    for (let at = segment.dataStart; at < segment.dataEnd;) {
+      const el = readElement(bytes, at, segment.dataEnd);
+      if (!el || el.dataEnd <= at) break;
+      segmentChildren.push(el);
+      if (el.id === 0x1549A966) info = el;
+      // Cluster can be unknown-sized and consume the rest of Segment. Info is
+      // required to precede Cluster in a normal WebM file.
+      if (el.unknown) break;
+      at = el.dataEnd;
+    }
+    if (!info) return null;
+    let scale = 1000000; const infoChildren = [];
+    for (let at = info.dataStart; at < info.dataEnd;) {
+      const el = readElement(bytes, at, info.dataEnd);
+      if (!el || el.dataEnd <= at) break;
+      if (el.id === 0x2AD7B1) {
+        let v = 0; for (let i = el.dataStart; i < el.dataEnd; i++) v = v * 256 + bytes[i];
+        if (v > 0) scale = v;
+      }
+      if (el.id !== 0x4489) infoChildren.push(raw(el));
+      at = el.dataEnd;
+    }
+    const duration = new Uint8Array(8);
+    new DataView(duration.buffer).setFloat64(0, durationSeconds * 1e9 / scale, false);
+    const durationEl = element(new Uint8Array([0x44, 0x89]), duration);
+    const infoId = bytes.subarray(info.start, info.start + info.idLen);
+    const newInfo = element(infoId, concat([...infoChildren, durationEl]));
+    const rebuilt = segmentChildren.map(el => el === info ? newInfo : raw(el));
+    const segmentId = bytes.subarray(segment.start, segment.start + segment.idLen);
+    const newSegment = element(segmentId, concat(rebuilt));
+    return concat([bytes.subarray(0, segment.start), newSegment, bytes.subarray(segment.dataEnd)]);
+  } catch (err) {
+    console.warn('WebM duration metadata repair failed:', err);
+    return null;
+  }
+}
+
+async function addOutputDurationMetadata(blob, durationSeconds) {
+  if (!blob || !/^video\/webm/i.test(blob.type || '')) return blob;
+  const repaired = repairWebmDurationBytes(await blob.arrayBuffer(), durationSeconds);
+  if (!repaired) {
+    log('فایل WebM ساخته شد، اما مرورگر اجازه اصلاح مدت‌زمان داخل ظرف فایل را نداد.', 'info');
+    return blob;
+  }
+  const result = new Blob([repaired], { type: 'video/webm' });
+  if (!result.size || result.size < blob.size * 0.95) return blob;
+  log(`مدت‌زمان ${formatVideoTime(durationSeconds)} در مشخصات فایل WebM ثبت شد.`, 'success');
+  return result;
+}
 
 function formatVideoTime(seconds) {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
@@ -1609,7 +1713,7 @@ async function performRender(fromConveyor = false) {
   try {
     setStage(4); setProgress(66, "رندر ویدئو", t("render")); log("رندر فریم‌ها شروع شد.");
     state.lastVideo = await renderVideo(state.voiceBlob);
-    await saveVideoToLibrary(state.lastVideo, { brand: brandText(), platform: state.platform, language: state.language, duration: Math.round(state.duration) }).catch(e => log(`ذخیره در کتابخانه انجام نشد: ${e.message || e}`, "info"));
+    await saveVideoToLibrary(state.lastVideo, { brand: brandText(), platform: state.platform, language: state.language, duration: Math.round(state.renderedDurationSeconds || state.duration), durationSeconds: state.renderedDurationSeconds || state.duration, mimeType: state.lastVideo.type || "" }).catch(e => log(`ذخیره در کتابخانه انجام نشد: ${e.message || e}`, "info"));
     await renderVideoLibrary();
     const previewUrl = URL.createObjectURL(state.lastVideo);
     $("#stage").innerHTML = `<video class="final-preview" controls playsinline preload="metadata"></video>`;
@@ -1934,8 +2038,11 @@ async function renderVideo(voiceBlob) {
       raf = requestAnimationFrame(tick);
     });
 
-    const blob = await done;
+    let blob = await done;
     if (blob.size < 10000) throw new Error("فایل ویدئو بسیار کوچک یا خالی ساخته شد. دوباره تلاش کن.");
+    state.renderedDurationSeconds = total / 1000;
+    blob = await addOutputDurationMetadata(blob, state.renderedDurationSeconds);
+    log(`خروجی نهایی: ${formatVideoTime(state.renderedDurationSeconds)} · ${blob.type || mime}`, "success");
     return blob;
   } finally {
     try { voiceSource?.stop(); } catch (_) {}
