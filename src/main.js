@@ -421,10 +421,10 @@ async function renderVideoLibrary() {
       wrap.innerHTML = `<div class="library-empty"><div>▣</div><strong>هنوز ویدئویی ذخیره نشده</strong><small>ویدئوهای ساخته‌شده را اینجا نگه می‌داریم تا بعداً دوباره ببینی، دانلود کنی یا حذف کنی.</small></div>`;
       return;
     }
-    wrap.innerHTML = rows.map(v => `<article class="library-item" data-id="${escapeHtml(v.id)}"><video playsinline controls preload="metadata"></video><div class="library-info"><strong>${escapeHtml(v.brand || "تبلیغ جدید")}</strong><small>${escapeHtml(platformLabel(v.platform))} · ${escapeHtml(languageLabel(v.language))} · ${new Date(v.createdAt).toLocaleDateString()}</small></div><div class="library-actions"><button class="secondary library-download" type="button">دانلود</button><button class="ghost library-delete" type="button">حذف</button></div></article>`).join("");
+    wrap.innerHTML = rows.map(v => `<article class="library-item" data-id="${escapeHtml(v.id)}"><video playsinline controls muted preload="metadata"></video><div class="library-info"><strong>${escapeHtml(v.brand || "تبلیغ جدید")}</strong><small>${escapeHtml(platformLabel(v.platform))} · ${escapeHtml(languageLabel(v.language))} · ${new Date(v.createdAt).toLocaleDateString()}</small></div><div class="library-actions"><button class="secondary library-download" type="button">دانلود</button><button class="ghost library-delete" type="button">حذف</button></div></article>`).join("");
     rows.forEach(v => {
       const item = [...wrap.querySelectorAll(".library-item")].find(x => x.dataset.id === v.id); if (!item) return;
-      const url = URL.createObjectURL(v.blob); libraryObjectUrls.add(url); const player = item.querySelector("video"); player.src = url; player.style.aspectRatio = outputRatio(v.platform).replace(":", " / "); player.style.objectFit = "contain"; player.addEventListener("error", () => log("این ویدئو در پخش‌کننده داخلی مرورگر باز نشد؛ فایل اصلی در کتابخانه حفظ شده است.", "info"), { once: true });
+      const url = URL.createObjectURL(v.blob); libraryObjectUrls.add(url); item.querySelector("video").src = url;
       item.querySelector(".library-download").onclick = () => downloadBlob(v.blob, `ad-maker-ai-${v.id}.${/mp4/i.test(v.blob?.type || v.mimeType || "") ? "mp4" : "webm"}`);
       item.querySelector(".library-delete").onclick = async () => { if (confirm("این ویدئو از کتابخانه حذف شود؟")) await deleteLibraryVideo(v.id); };
     });
@@ -441,15 +441,6 @@ function downloadBlob(blob, filename) {
 function languageLabel(code) { return ({en:"English",ar:"العربية",tr:"Türkçe",ur:"اردو",hi:"हिन्दी",fa:"فارسی",ps:"پښتو",ru:"Русский",es:"Español",fr:"Français",de:"Deutsch",id:"Bahasa Indonesia",uz:"O‘zbekcha"})[code] || code || "—"; }
 function platformLabel(code) { return ({youtube_short:"YouTube Shorts",youtube:"YouTube",tiktok:"TikTok",instagram_reels:"Instagram Reels",facebook:"Facebook",instagram:"Instagram",linkedin:"LinkedIn",whatsapp:"WhatsApp"})[code] || "تبلیغ"; }
 function outputRatio(code) { return ({youtube:"16:9",instagram:"1:1",facebook:"4:5",linkedin:"1:1",youtube_short:"9:16",tiktok:"9:16",instagram_reels:"9:16",whatsapp:"9:16"})[code] || "9:16"; }
-function outputDimensions(code) {
-  const ratio = outputRatio(code);
-  // Keep dimensions even and encoder-friendly. Portrait platforms get full HD;
-  // landscape and square use standard social-video dimensions.
-  return ratio === "16:9" ? { width: 1920, height: 1080 } :
-    ratio === "1:1" ? { width: 1080, height: 1080 } :
-    ratio === "4:5" ? { width: 1080, height: 1350 } :
-    { width: 1080, height: 1920 };
-}
 
 // Repair the WebM container duration. MediaRecorder on Android/Chrome often
 // emits valid playable clusters but omits Segment/Info/Duration; some gallery
@@ -515,21 +506,8 @@ function repairWebmDurationBytes(input, durationSeconds) {
       if (el.unknown) break;
       at = el.dataEnd;
     }
+    if (!info) return null;
     let scale = 1000000; const infoChildren = [];
-    if (!info) {
-      // MediaRecorder may omit Segment/Info entirely. Add a valid Info element
-      // with TimecodeScale and Duration so Android media scanners can index it.
-      const scalePayload = new Uint8Array([0x0f, 0x42, 0x40]); // 1,000,000 ns
-      const scaleEl = element(new Uint8Array([0x2a, 0xd7, 0xb1]), scalePayload);
-      const durationPayload = new Uint8Array(8);
-      new DataView(durationPayload.buffer).setFloat64(0, durationSeconds * 1000, false);
-      const durationEl = element(new Uint8Array([0x44, 0x89]), durationPayload);
-      const newInfo = element(new Uint8Array([0x15, 0x49, 0xa9, 0x66]), concat([scaleEl, durationEl]));
-      const rebuilt = [newInfo, ...segmentChildren.map(raw)];
-      const segmentId = bytes.subarray(segment.start, segment.start + segment.idLen);
-      const newSegment = element(segmentId, concat(rebuilt));
-      return concat([bytes.subarray(0, segment.start), newSegment, bytes.subarray(segment.dataEnd)]);
-    }
     for (let at = info.dataStart; at < info.dataEnd;) {
       const el = readElement(bytes, at, info.dataEnd);
       if (!el || el.dataEnd <= at) break;
@@ -555,17 +533,111 @@ function repairWebmDurationBytes(input, durationSeconds) {
   }
 }
 
-async function addOutputDurationMetadata(blob, durationSeconds) {
-  if (!blob || !/^video\/webm/i.test(blob.type || '')) return blob;
-  const repaired = repairWebmDurationBytes(await blob.arrayBuffer(), durationSeconds);
-  if (!repaired) {
-    log('فایل WebM ساخته شد، اما مرورگر اجازه اصلاح مدت‌زمان داخل ظرف فایل را نداد.', 'info');
-    return blob;
+// MediaRecorder on Chromium may emit fragmented MP4 whose mvhd/tkhd/mdhd
+// duration fields remain zero (or only describe the first fragment). Android
+// Gallery and social share sheets often trust these header fields. Patch the
+// movie and track headers to the measured render duration before saving.
+function repairFragmentedMp4DurationBytes(input, durationSeconds) {
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  if (!bytes.length || !(durationSeconds > 0)) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const read32 = (p) => view.getUint32(p, false);
+  const write32 = (p, v) => view.setUint32(p, Math.max(0, Math.min(0xffffffff, Math.round(v))), false);
+  const write64 = (p, v) => {
+    const n = BigInt(Math.max(0, Math.round(v)));
+    view.setUint32(p, Number((n >> 32n) & 0xffffffffn), false);
+    view.setUint32(p + 4, Number(n & 0xffffffffn), false);
+  };
+  const boxAt = (p, end) => {
+    if (p + 8 > end) return null;
+    let size = read32(p), header = 8;
+    if (size === 1) {
+      if (p + 16 > end) return null;
+      const hi = read32(p + 8), lo = read32(p + 12);
+      size = hi * 4294967296 + lo; header = 16;
+    } else if (size === 0) size = end - p;
+    if (size < header || p + size > end) return null;
+    return { start: p, end: p + size, data: p + header, type: String.fromCharCode(bytes[p+4],bytes[p+5],bytes[p+6],bytes[p+7]) };
+  };
+  try {
+    let moov = null;
+    for (let p = 0; p + 8 <= bytes.length;) {
+      const b = boxAt(p, bytes.length); if (!b) break;
+      if (b.type === 'moov') { moov = b; break; }
+      p = b.end;
+    }
+    if (!moov) return null;
+    const children = (parent) => {
+      const out = [];
+      for (let p = parent.data; p + 8 <= parent.end;) {
+        const b = boxAt(p, parent.end); if (!b) break;
+        out.push(b); p = b.end;
+      }
+      return out;
+    };
+    const moovChildren = children(moov);
+    const mvhd = moovChildren.find(b => b.type === 'mvhd');
+    if (!mvhd) return null;
+    const mvVer = bytes[mvhd.data];
+    const mvScaleAt = mvhd.data + (mvVer === 1 ? 20 : 12);
+    const mvDurAt = mvhd.data + (mvVer === 1 ? 24 : 16);
+    const movieScale = read32(mvScaleAt);
+    if (!movieScale) return null;
+    if (mvVer === 1) write64(mvDurAt, durationSeconds * movieScale);
+    else write32(mvDurAt, durationSeconds * movieScale);
+    for (const trak of moovChildren.filter(b => b.type === 'trak')) {
+      const tc = children(trak);
+      const tkhd = tc.find(b => b.type === 'tkhd');
+      if (tkhd) {
+        const v = bytes[tkhd.data], at = tkhd.data + (v === 1 ? 28 : 20);
+        if (v === 1) write64(at, durationSeconds * movieScale);
+        else write32(at, durationSeconds * movieScale);
+      }
+      const mdia = tc.find(b => b.type === 'mdia');
+      if (mdia) {
+        const mdhd = children(mdia).find(b => b.type === 'mdhd');
+        if (mdhd) {
+          const v = bytes[mdhd.data];
+          const scaleAt = mdhd.data + (v === 1 ? 20 : 12);
+          const durAt = mdhd.data + (v === 1 ? 24 : 16);
+          const scale = read32(scaleAt);
+          if (scale) {
+            if (v === 1) write64(durAt, durationSeconds * scale);
+            else write32(durAt, durationSeconds * scale);
+          }
+        }
+      }
+    }
+    return bytes;
+  } catch (err) {
+    console.warn('MP4 duration header repair failed:', err);
+    return null;
   }
-  const result = new Blob([repaired], { type: 'video/webm' });
-  if (!result.size || result.size < blob.size * 0.95) return blob;
-  log(`مدت‌زمان ${formatVideoTime(durationSeconds)} در مشخصات فایل WebM ثبت شد.`, 'success');
-  return result;
+}
+
+async function addOutputDurationMetadata(blob, durationSeconds) {
+  if (!blob) return blob;
+  if (/^video\/mp4/i.test(blob.type || '')) {
+    const repaired = repairFragmentedMp4DurationBytes(await blob.arrayBuffer(), durationSeconds);
+    if (!repaired) {
+      log('MP4 ساخته شد، اما سرآیند مدت‌زمان آن اصلاح نشد؛ فایل اصلی حفظ شد.', 'warning');
+      return blob;
+    }
+    log(`مدت‌زمان ${formatVideoTime(durationSeconds)} در سرآیند MP4 ثبت شد.`, 'success');
+    return new Blob([repaired], { type: 'video/mp4' });
+  }
+  if (/^video\/webm/i.test(blob.type || '')) {
+    const repaired = repairWebmDurationBytes(await blob.arrayBuffer(), durationSeconds);
+    if (!repaired) {
+      log('فایل WebM ساخته شد، اما مرورگر اجازه اصلاح مدت‌زمان داخل ظرف فایل را نداد.', 'info');
+      return blob;
+    }
+    const result = new Blob([repaired], { type: 'video/webm' });
+    if (!result.size || result.size < blob.size * 0.95) return blob;
+    log(`مدت‌زمان ${formatVideoTime(durationSeconds)} در مشخصات فایل WebM ثبت شد.`, 'success');
+    return result;
+  }
+  return blob;
 }
 
 function formatVideoTime(seconds) {
@@ -1212,15 +1284,6 @@ function updatePlatformUI() {
   $$(".style-chip[data-style]").forEach(x => x.classList.toggle("active", x.dataset.style === state.platform));
   $("#selectedPlatform").textContent = `${label} · ${ratio}`;
   $("#stageFormat").textContent = `خروجی ${ratio} با صدا و زیرنویس`;
-  const stage = $("#stage");
-  if (stage) {
-    stage.style.aspectRatio = ratio.replace(":", " / ");
-    stage.style.height = "auto";
-    stage.style.maxHeight = "min(72vh, 720px)";
-    stage.style.maxWidth = ratio === "16:9" ? "min(100%, 900px)" : ratio === "1:1" ? "min(100%, 600px)" : ratio === "4:5" ? "min(100%, 540px)" : "min(100%, 405px)";
-    stage.style.marginInline = "auto";
-    stage.dataset.ratio = ratio;
-  }
 }
 
 function buildModeLabel(mode) {
@@ -1744,12 +1807,9 @@ async function performRender(fromConveyor = false) {
   try {
     setStage(4); setProgress(66, "رندر ویدئو", t("render")); log("رندر فریم‌ها شروع شد.");
     state.lastVideo = await renderVideo(state.voiceBlob);
-    await saveVideoToLibrary(state.lastVideo, { brand: brandText(), platform: state.platform, language: state.language, duration: Math.round(state.renderedDurationSeconds || state.duration), durationSeconds: state.renderedDurationSeconds || state.duration, width: outputDimensions(state.platform).width, height: outputDimensions(state.platform).height, aspectRatio: outputRatio(state.platform), mimeType: state.lastVideo.type || "" }).catch(e => log(`ذخیره در کتابخانه انجام نشد: ${e.message || e}`, "info"));
+    await saveVideoToLibrary(state.lastVideo, { brand: brandText(), platform: state.platform, language: state.language, duration: Math.round(state.renderedDurationSeconds || state.duration), durationSeconds: state.renderedDurationSeconds || state.duration, mimeType: state.lastVideo.type || "" }).catch(e => log(`ذخیره در کتابخانه انجام نشد: ${e.message || e}`, "info"));
     await renderVideoLibrary();
     const previewUrl = URL.createObjectURL(state.lastVideo);
-    const ratio = outputRatio(state.platform);
-    $("#stage").style.aspectRatio = ratio.replace(":", " / ");
-    $("#stage").dataset.ratio = ratio;
     $("#stage").innerHTML = `<video class="final-preview" controls playsinline preload="metadata"></video>`;
     const preview = $("#stage video");
     preview.src = previewUrl;
@@ -1788,7 +1848,7 @@ $("#downloadBtn").onclick = () => {
 };
 
 $("#rerenderBtn").onclick = () => $("#renderBtn").click();
-$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.buildMode = "pro"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; state.videoAnalysisJobActive = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".creation-mode").forEach(x => x.classList.toggle("active", x.dataset.buildMode === "pro")); updateBuildModeUI(); $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small id="stageFormat">خروجی ${outputRatio(state.platform)} با صدا و زیرنویس</small></div>`; updatePlatformUI(); resetPipeline(); };
+$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.buildMode = "pro"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; state.videoAnalysisJobActive = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".creation-mode").forEach(x => x.classList.toggle("active", x.dataset.buildMode === "pro")); updateBuildModeUI(); $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
 $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line muted"><span>●</span> منتظر عملیات بعدی...</div>`; };
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
 $("#scriptMore").onclick = () => { const box = $("#scriptEditor"); const details = $(".script-details"); details.open = true; box.classList.toggle("expanded"); $("#scriptMore").textContent = box.classList.contains("expanded") ? "کمتر" : "بیشتر"; if (box.classList.contains("expanded")) { box.style.height = "auto"; box.style.height = `${Math.max(180, box.scrollHeight)}px`; } else box.style.height = "82px"; };
@@ -1816,7 +1876,9 @@ function attachHiddenVideo(v) {
 
 async function renderVideo(voiceBlob) {
   if (!voiceBlob || !voiceBlob.size) throw new Error("گویندگی صوتی آماده نیست؛ ابتدا گویندگی AI را با موفقیت بساز.");
-  const { width: W, height: H } = outputDimensions(state.platform);
+  const ratio = outputRatio(state.platform);
+  const W = ratio === "16:9" ? 1920 : 1080;
+  const H = ratio === "16:9" ? 1080 : ratio === "1:1" ? 1080 : ratio === "4:5" ? 1350 : 1920;
   const canvas = document.createElement("canvas");
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -1894,22 +1956,13 @@ async function renderVideo(voiceBlob) {
     const mime = candidates.find(x => MediaRecorder.isTypeSupported(x));
     if (!mime) throw new Error("این مرورگر قالب خروجی WebM را پشتیبانی نمی‌کند. آخرین Chrome را امتحان کن.");
 
-    let rec;
-    try {
-      rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6000000, audioBitsPerSecond: 192000 });
-    } catch (firstError) {
-      // Some Android browsers report a MIME as supported but reject it at construction.
-      const fallback = candidates.filter(x => /webm/i.test(x)).find(x => MediaRecorder.isTypeSupported(x));
-      if (!fallback) throw firstError;
-      rec = new MediaRecorder(stream, { mimeType: fallback, videoBitsPerSecond: 6000000, audioBitsPerSecond: 192000 });
-    }
-    const actualMime = rec.mimeType || mime;
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 });
     const chunks = [];
     const done = new Promise((resolve, reject) => {
       rec.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
       rec.onerror = e => reject(e.error || new Error("MediaRecorder error"));
       rec.onstop = () => {
-        const blob = new Blob(chunks, { type: actualMime });
+        const blob = new Blob(chunks, { type: mime });
         if (!blob.size) reject(new Error("فایل ویدئو خالی ساخته شد.")); else resolve(blob);
       };
     });
@@ -2057,7 +2110,7 @@ async function renderVideo(voiceBlob) {
 
     drawFrame(0);
     voiceSource.start(0); if (musicSource) musicSource.start(0);
-    rec.start(1000);
+    rec.start(250);
 
     await new Promise((resolve, reject) => {
       let raf = 0;
@@ -2084,7 +2137,6 @@ async function renderVideo(voiceBlob) {
     state.renderedDurationSeconds = total / 1000;
     blob = await addOutputDurationMetadata(blob, state.renderedDurationSeconds);
     log(`خروجی نهایی: ${formatVideoTime(state.renderedDurationSeconds)} · ${blob.type || mime}`, "success");
-    if (/webm/i.test(blob.type || "")) log("توجه: این مرورگر خروجی WebM ساخته است. پخش داخل برنامه و گالری ممکن است، اما برخی نسخه‌های فیسبوک WebM را نمی‌پذیرند؛ برای اشتراک‌گذاری مطمئن MP4/H.264 لازم است.", "info");
     return blob;
   } finally {
     try { voiceSource?.stop(); } catch (_) {}
