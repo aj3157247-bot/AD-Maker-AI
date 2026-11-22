@@ -421,10 +421,10 @@ async function renderVideoLibrary() {
       wrap.innerHTML = `<div class="library-empty"><div>▣</div><strong>هنوز ویدئویی ذخیره نشده</strong><small>ویدئوهای ساخته‌شده را اینجا نگه می‌داریم تا بعداً دوباره ببینی، دانلود کنی یا حذف کنی.</small></div>`;
       return;
     }
-    wrap.innerHTML = rows.map(v => `<article class="library-item" data-id="${escapeHtml(v.id)}"><video playsinline muted preload="metadata"></video><div class="library-info"><strong>${escapeHtml(v.brand || "تبلیغ جدید")}</strong><small>${escapeHtml(platformLabel(v.platform))} · ${escapeHtml(languageLabel(v.language))} · ${new Date(v.createdAt).toLocaleDateString()}</small></div><div class="library-actions"><button class="secondary library-download" type="button">دانلود</button><button class="ghost library-delete" type="button">حذف</button></div></article>`).join("");
+    wrap.innerHTML = rows.map(v => `<article class="library-item" data-id="${escapeHtml(v.id)}"><video playsinline controls preload="metadata"></video><div class="library-info"><strong>${escapeHtml(v.brand || "تبلیغ جدید")}</strong><small>${escapeHtml(platformLabel(v.platform))} · ${escapeHtml(languageLabel(v.language))} · ${new Date(v.createdAt).toLocaleDateString()}</small></div><div class="library-actions"><button class="secondary library-download" type="button">دانلود</button><button class="ghost library-delete" type="button">حذف</button></div></article>`).join("");
     rows.forEach(v => {
       const item = [...wrap.querySelectorAll(".library-item")].find(x => x.dataset.id === v.id); if (!item) return;
-      const url = URL.createObjectURL(v.blob); libraryObjectUrls.add(url); item.querySelector("video").src = url;
+      const url = URL.createObjectURL(v.blob); libraryObjectUrls.add(url); const player = item.querySelector("video"); player.src = url; player.style.aspectRatio = outputRatio(v.platform).replace(":", " / "); player.style.objectFit = "contain"; player.addEventListener("error", () => log("این ویدئو در پخش‌کننده داخلی مرورگر باز نشد؛ فایل اصلی در کتابخانه حفظ شده است.", "info"), { once: true });
       item.querySelector(".library-download").onclick = () => downloadBlob(v.blob, `ad-maker-ai-${v.id}.${/mp4/i.test(v.blob?.type || v.mimeType || "") ? "mp4" : "webm"}`);
       item.querySelector(".library-delete").onclick = async () => { if (confirm("این ویدئو از کتابخانه حذف شود؟")) await deleteLibraryVideo(v.id); };
     });
@@ -441,6 +441,15 @@ function downloadBlob(blob, filename) {
 function languageLabel(code) { return ({en:"English",ar:"العربية",tr:"Türkçe",ur:"اردو",hi:"हिन्दी",fa:"فارسی",ps:"پښتو",ru:"Русский",es:"Español",fr:"Français",de:"Deutsch",id:"Bahasa Indonesia",uz:"O‘zbekcha"})[code] || code || "—"; }
 function platformLabel(code) { return ({youtube_short:"YouTube Shorts",youtube:"YouTube",tiktok:"TikTok",instagram_reels:"Instagram Reels",facebook:"Facebook",instagram:"Instagram",linkedin:"LinkedIn",whatsapp:"WhatsApp"})[code] || "تبلیغ"; }
 function outputRatio(code) { return ({youtube:"16:9",instagram:"1:1",facebook:"4:5",linkedin:"1:1",youtube_short:"9:16",tiktok:"9:16",instagram_reels:"9:16",whatsapp:"9:16"})[code] || "9:16"; }
+function outputDimensions(code) {
+  const ratio = outputRatio(code);
+  // Keep dimensions even and encoder-friendly. Portrait platforms get full HD;
+  // landscape and square use standard social-video dimensions.
+  return ratio === "16:9" ? { width: 1920, height: 1080 } :
+    ratio === "1:1" ? { width: 1080, height: 1080 } :
+    ratio === "4:5" ? { width: 1080, height: 1350 } :
+    { width: 1080, height: 1920 };
+}
 
 // Repair the WebM container duration. MediaRecorder on Android/Chrome often
 // emits valid playable clusters but omits Segment/Info/Duration; some gallery
@@ -506,8 +515,21 @@ function repairWebmDurationBytes(input, durationSeconds) {
       if (el.unknown) break;
       at = el.dataEnd;
     }
-    if (!info) return null;
     let scale = 1000000; const infoChildren = [];
+    if (!info) {
+      // MediaRecorder may omit Segment/Info entirely. Add a valid Info element
+      // with TimecodeScale and Duration so Android media scanners can index it.
+      const scalePayload = new Uint8Array([0x0f, 0x42, 0x40]); // 1,000,000 ns
+      const scaleEl = element(new Uint8Array([0x2a, 0xd7, 0xb1]), scalePayload);
+      const durationPayload = new Uint8Array(8);
+      new DataView(durationPayload.buffer).setFloat64(0, durationSeconds * 1000, false);
+      const durationEl = element(new Uint8Array([0x44, 0x89]), durationPayload);
+      const newInfo = element(new Uint8Array([0x15, 0x49, 0xa9, 0x66]), concat([scaleEl, durationEl]));
+      const rebuilt = [newInfo, ...segmentChildren.map(raw)];
+      const segmentId = bytes.subarray(segment.start, segment.start + segment.idLen);
+      const newSegment = element(segmentId, concat(rebuilt));
+      return concat([bytes.subarray(0, segment.start), newSegment, bytes.subarray(segment.dataEnd)]);
+    }
     for (let at = info.dataStart; at < info.dataEnd;) {
       const el = readElement(bytes, at, info.dataEnd);
       if (!el || el.dataEnd <= at) break;
@@ -1190,6 +1212,15 @@ function updatePlatformUI() {
   $$(".style-chip[data-style]").forEach(x => x.classList.toggle("active", x.dataset.style === state.platform));
   $("#selectedPlatform").textContent = `${label} · ${ratio}`;
   $("#stageFormat").textContent = `خروجی ${ratio} با صدا و زیرنویس`;
+  const stage = $("#stage");
+  if (stage) {
+    stage.style.aspectRatio = ratio.replace(":", " / ");
+    stage.style.height = "auto";
+    stage.style.maxHeight = "min(72vh, 720px)";
+    stage.style.maxWidth = ratio === "16:9" ? "min(100%, 900px)" : ratio === "1:1" ? "min(100%, 600px)" : ratio === "4:5" ? "min(100%, 540px)" : "min(100%, 405px)";
+    stage.style.marginInline = "auto";
+    stage.dataset.ratio = ratio;
+  }
 }
 
 function buildModeLabel(mode) {
@@ -1713,9 +1744,12 @@ async function performRender(fromConveyor = false) {
   try {
     setStage(4); setProgress(66, "رندر ویدئو", t("render")); log("رندر فریم‌ها شروع شد.");
     state.lastVideo = await renderVideo(state.voiceBlob);
-    await saveVideoToLibrary(state.lastVideo, { brand: brandText(), platform: state.platform, language: state.language, duration: Math.round(state.renderedDurationSeconds || state.duration), durationSeconds: state.renderedDurationSeconds || state.duration, mimeType: state.lastVideo.type || "" }).catch(e => log(`ذخیره در کتابخانه انجام نشد: ${e.message || e}`, "info"));
+    await saveVideoToLibrary(state.lastVideo, { brand: brandText(), platform: state.platform, language: state.language, duration: Math.round(state.renderedDurationSeconds || state.duration), durationSeconds: state.renderedDurationSeconds || state.duration, width: outputDimensions(state.platform).width, height: outputDimensions(state.platform).height, aspectRatio: outputRatio(state.platform), mimeType: state.lastVideo.type || "" }).catch(e => log(`ذخیره در کتابخانه انجام نشد: ${e.message || e}`, "info"));
     await renderVideoLibrary();
     const previewUrl = URL.createObjectURL(state.lastVideo);
+    const ratio = outputRatio(state.platform);
+    $("#stage").style.aspectRatio = ratio.replace(":", " / ");
+    $("#stage").dataset.ratio = ratio;
     $("#stage").innerHTML = `<video class="final-preview" controls playsinline preload="metadata"></video>`;
     const preview = $("#stage video");
     preview.src = previewUrl;
@@ -1754,7 +1788,7 @@ $("#downloadBtn").onclick = () => {
 };
 
 $("#rerenderBtn").onclick = () => $("#renderBtn").click();
-$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.buildMode = "pro"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; state.videoAnalysisJobActive = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".creation-mode").forEach(x => x.classList.toggle("active", x.dataset.buildMode === "pro")); updateBuildModeUI(); $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
+$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.buildMode = "pro"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; state.videoAnalysisJobActive = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".creation-mode").forEach(x => x.classList.toggle("active", x.dataset.buildMode === "pro")); updateBuildModeUI(); $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small id="stageFormat">خروجی ${outputRatio(state.platform)} با صدا و زیرنویس</small></div>`; updatePlatformUI(); resetPipeline(); };
 $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line muted"><span>●</span> منتظر عملیات بعدی...</div>`; };
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
 $("#scriptMore").onclick = () => { const box = $("#scriptEditor"); const details = $(".script-details"); details.open = true; box.classList.toggle("expanded"); $("#scriptMore").textContent = box.classList.contains("expanded") ? "کمتر" : "بیشتر"; if (box.classList.contains("expanded")) { box.style.height = "auto"; box.style.height = `${Math.max(180, box.scrollHeight)}px`; } else box.style.height = "82px"; };
@@ -1782,9 +1816,7 @@ function attachHiddenVideo(v) {
 
 async function renderVideo(voiceBlob) {
   if (!voiceBlob || !voiceBlob.size) throw new Error("گویندگی صوتی آماده نیست؛ ابتدا گویندگی AI را با موفقیت بساز.");
-  const ratio = outputRatio(state.platform);
-  const W = ratio === "16:9" ? 1280 : ratio === "1:1" ? 1080 : ratio === "4:5" ? 1080 : 720;
-  const H = ratio === "16:9" ? 720 : ratio === "1:1" ? 1080 : ratio === "4:5" ? 1350 : 1280;
+  const { width: W, height: H } = outputDimensions(state.platform);
   const canvas = document.createElement("canvas");
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -1862,13 +1894,22 @@ async function renderVideo(voiceBlob) {
     const mime = candidates.find(x => MediaRecorder.isTypeSupported(x));
     if (!mime) throw new Error("این مرورگر قالب خروجی WebM را پشتیبانی نمی‌کند. آخرین Chrome را امتحان کن.");
 
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 });
+    let rec;
+    try {
+      rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6000000, audioBitsPerSecond: 192000 });
+    } catch (firstError) {
+      // Some Android browsers report a MIME as supported but reject it at construction.
+      const fallback = candidates.filter(x => /webm/i.test(x)).find(x => MediaRecorder.isTypeSupported(x));
+      if (!fallback) throw firstError;
+      rec = new MediaRecorder(stream, { mimeType: fallback, videoBitsPerSecond: 6000000, audioBitsPerSecond: 192000 });
+    }
+    const actualMime = rec.mimeType || mime;
     const chunks = [];
     const done = new Promise((resolve, reject) => {
       rec.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
       rec.onerror = e => reject(e.error || new Error("MediaRecorder error"));
       rec.onstop = () => {
-        const blob = new Blob(chunks, { type: mime });
+        const blob = new Blob(chunks, { type: actualMime });
         if (!blob.size) reject(new Error("فایل ویدئو خالی ساخته شد.")); else resolve(blob);
       };
     });
@@ -2016,7 +2057,7 @@ async function renderVideo(voiceBlob) {
 
     drawFrame(0);
     voiceSource.start(0); if (musicSource) musicSource.start(0);
-    rec.start(250);
+    rec.start(1000);
 
     await new Promise((resolve, reject) => {
       let raf = 0;
@@ -2043,6 +2084,7 @@ async function renderVideo(voiceBlob) {
     state.renderedDurationSeconds = total / 1000;
     blob = await addOutputDurationMetadata(blob, state.renderedDurationSeconds);
     log(`خروجی نهایی: ${formatVideoTime(state.renderedDurationSeconds)} · ${blob.type || mime}`, "success");
+    if (/webm/i.test(blob.type || "")) log("توجه: این مرورگر خروجی WebM ساخته است. پخش داخل برنامه و گالری ممکن است، اما برخی نسخه‌های فیسبوک WebM را نمی‌پذیرند؛ برای اشتراک‌گذاری مطمئن MP4/H.264 لازم است.", "info");
     return blob;
   } finally {
     try { voiceSource?.stop(); } catch (_) {}
