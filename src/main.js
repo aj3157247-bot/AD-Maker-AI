@@ -36,7 +36,7 @@ const copy = {
     descPlaceholder: "محصول، خدمات، سایت یا اپلیکیشن را توضیح بده. چه مشکلی را حل می‌کند و مهم‌ترین مزیت آن چیست؟",
     ready: "آماده برای ساخت", analyze: "در حال تحلیل اطلاعات و رسانه‌ها...", script: "در حال نوشتن سناریوی تبلیغاتی...",
     voice: "در حال ساخت گویندگی حرفه‌ای...", render: "در حال ساخت و رندر ویدئو...", done: "تبلیغ شما آماده است 🎉",
-    missing: "نام برند و توضیح محصول را وارد کنید.", fallback: "سناریوی داخلی آماده شد؛ برای تولید AI، کلید OpenRouter را بررسی کنید.",
+    missing: "توضیحات محصول یا خدمات را وارد کنید.", fallback: "سناریوی داخلی آماده شد؛ برای تولید AI، کلید OpenRouter را بررسی کنید.",
     voiceFallback: "گویندگی آنلاین در دسترس نبود؛ از صدای مرورگر استفاده می‌شود.", voiceReady: "گویندگی حرفه‌ای آماده شد ✓",
     mediaReady: "رسانه‌ها آماده شدند", noMedia: "بدون رسانه؛ ویدئو با کارت‌های متنی ساخته می‌شود.",
     retry: "تلاش دوباره", noVoice: "ادامه بدون گویندگی", saved: "فایل آماده دانلود است."
@@ -46,7 +46,7 @@ const copy = {
     descPlaceholder: "محصول، خدمت، وېبپاڼه یا اپلېکېشن تشریح کړئ. کومه ستونزه حل کوي او مهمه ګټه یې څه ده؟",
     ready: "د جوړولو لپاره چمتو", analyze: "د معلوماتو او رسنیو تحلیل روان دی...", script: "اعلاني سناریو جوړېږي...",
     voice: "مسلکي غږ جوړېږي...", render: "ویډیو جوړېږي او رینډر کېږي...", done: "ستاسو اعلان چمتو شو 🎉",
-    missing: "د برانډ نوم او د محصول تشریح ولیکئ.", fallback: "داخلي سناریو چمتو شوه؛ د AI لپاره OpenRouter کلیمه وګورئ.",
+    missing: "د محصول یا خدمت تشریح ولیکئ.", fallback: "داخلي سناریو چمتو شوه؛ د AI لپاره OpenRouter کلیمه وګورئ.",
     voiceFallback: "آنلاین غږ موجود نه و؛ د براوزر غږ کارول کېږي.", voiceReady: "مسلکي غږ چمتو شو ✓",
     mediaReady: "رسنۍ چمتو شوې", noMedia: "رسنۍ نشته؛ ویډیو د متني کارتونو له لارې جوړېږي.",
     retry: "بیا هڅه", noVoice: "بې له غږه دوام", saved: "فایل د ډاونلوډ لپاره چمتو دی."
@@ -56,7 +56,7 @@ const copy = {
     descPlaceholder: "Describe the product, service, website or app. What problem does it solve and what is its main benefit?",
     ready: "Ready to create", analyze: "Analyzing your information and media...", script: "Writing your advertising script...",
     voice: "Generating professional voice-over...", render: "Building and rendering the video...", done: "Your advertisement is ready 🎉",
-    missing: "Enter the brand name and product description.", fallback: "Local script is ready; check your OpenRouter key for AI generation.",
+    missing: "Enter a description of the product or service.", fallback: "Local script is ready; check your OpenRouter key for AI generation.",
     voiceFallback: "Online voice generation was unavailable; browser voice will be used.", voiceReady: "Professional voice-over ready ✓",
     mediaReady: "Media prepared", noMedia: "No media added; the video will use text cards.",
     retry: "Retry", noVoice: "Continue without voice", saved: "Your file is ready to download."
@@ -104,8 +104,8 @@ function renderShell() {
 
       <nav class="workspace-nav" aria-label="بخش‌های AD Maker AI">
         <button type="button" class="workspace-nav-item active" data-focus="studio"><span>🎬</span><b>استودیو</b><small>ساخت تبلیغ</small></button>
-        <button type="button" class="workspace-nav-item" data-focus="analysis"><span>🔍</span><b>تحلیل ویدئو</b><small>تحلیل با AI</small></button>
-        <button type="button" class="workspace-nav-item" data-focus="script"><span>✦</span><b>سناریو + نام</b><small>ساخت با AI</small></button>
+        <button type="button" class="workspace-nav-item" data-focus="analysis"><span>🖼️</span><b>رسانه‌ها</b><small>عکس و ویدئو</small></button>
+        <button type="button" class="workspace-nav-item" data-focus="script"><span>✦</span><b>سناریو</b><small>تنظیمات نوشتار</small></button>
         <button type="button" class="workspace-nav-item" data-focus="library"><span>▣</span><b>کتابخانه</b><small>ویدئوهای ساخته‌شده</small></button>
       </nav>
 
@@ -113,7 +113,7 @@ function renderShell() {
         <section class="setup card">
           <div class="section-head"><div><small>مرحله ۱</small><h2>اطلاعات تبلیغ</h2></div><span class="step-state">شروع سریع</span></div>
 
-          <div class="field focus-core"><label>نام برند یا محصول <b>*</b></label><input id="brand" class="input" placeholder="مثلاً: بازارک"></div>
+          <input id="brand" type="hidden" value="تبلیغ شما">
           <div class="field focus-core"><label>درباره محصول یا خدمات <b>*</b></label><textarea id="desc" placeholder="چه چیزی می‌فروشی یا چه خدمتی ارائه می‌کنی؟ مزیت اصلی، مخاطب و راه ارتباطی را بنویس..."></textarea><div class="hint">اگر توضیحات کوتاه باشد، AI آن را متناسب با زمان ویدئو حرفه‌ای‌تر می‌کند.</div></div>
 
           <div class="quick-grid focus-core">
@@ -436,106 +436,6 @@ async function renderVideoLibrary() {
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = filename; a.rel = "noopener"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
-}
-
-// MediaRecorder WebM files often omit the EBML Duration field. Some Android
-// gallery apps then display 00:00 even though the media packets contain the
-// complete recording. Add/repair that field without re-encoding the video.
-function patchWebmDuration(input, durationSeconds) {
-  if (!input || !Number.isFinite(durationSeconds) || durationSeconds <= 0) return input;
-  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-  const idLength = first => {
-    for (let n = 1; n <= 4; n++) if (first & (1 << (8 - n))) return n;
-    return 0;
-  };
-  const readElement = (data, offset, limit) => {
-    if (offset >= limit) return null;
-    const il = idLength(data[offset]);
-    if (!il || offset + il >= limit) return null;
-    let id = 0;
-    for (let i = 0; i < il; i++) id = id * 256 + data[offset + i];
-    const first = data[offset + il];
-    const sl = idLength(first);
-    if (!sl || sl > 8 || offset + il + sl > limit) return null;
-    let size = first & ((1 << (8 - sl)) - 1);
-    for (let i = 1; i < sl; i++) size = size * 256 + data[offset + il + i];
-    const unknown = size === Math.pow(2, 7 * sl) - 1;
-    const dataStart = offset + il + sl;
-    const dataEnd = unknown ? limit : Math.min(limit, dataStart + size);
-    return { id, idStart: offset, idLength: il, sizeStart: offset + il, sizeLength: sl, dataStart, dataEnd, unknown };
-  };
-  const encodeSize = size => {
-    for (let n = 1; n <= 8; n++) {
-      if (size < Math.pow(2, 7 * n) - 1) {
-        const out = new Uint8Array(n); let value = size;
-        for (let i = n - 1; i >= 0; i--) { out[i] = value & 255; value = Math.floor(value / 256); }
-        out[0] |= 1 << (8 - n);
-        return out;
-      }
-    }
-    throw new Error("WebM metadata is too large.");
-  };
-  const concat = parts => {
-    const length = parts.reduce((n, x) => n + x.length, 0);
-    const out = new Uint8Array(length); let at = 0;
-    for (const part of parts) { out.set(part, at); at += part.length; }
-    return out;
-  };
-  const raw = el => bytes.subarray(el.idStart, el.dataEnd);
-  const makeElement = (idBytes, payload) => concat([idBytes, encodeSize(payload.length), payload]);
-  try {
-    let segment = null;
-    for (let at = 0; at < bytes.length;) {
-      const el = readElement(bytes, at, bytes.length);
-      if (!el) break;
-      if (el.id === 0x18538067) { segment = el; break; }
-      if (el.dataEnd <= at) break;
-      at = el.dataEnd;
-    }
-    if (!segment) return input;
-    let info = null;
-    const children = [];
-    for (let at = segment.dataStart; at < segment.dataEnd;) {
-      const el = readElement(bytes, at, segment.dataEnd);
-      if (!el || el.dataEnd <= at) break;
-      if (el.id === 0x1549A966) info = el;
-      children.push(el);
-      at = el.dataEnd;
-    }
-    if (!info) return input;
-    const infoChildren = [];
-    let timecodeScale = 1000000;
-    for (let at = info.dataStart; at < info.dataEnd;) {
-      const el = readElement(bytes, at, info.dataEnd);
-      if (!el || el.dataEnd <= at) break;
-      if (el.id === 0x2AD7B1) {
-        let value = 0;
-        for (let i = el.dataStart; i < el.dataEnd; i++) value = value * 256 + bytes[i];
-        if (value > 0) timecodeScale = value;
-      }
-      if (el.id !== 0x4489) infoChildren.push(raw(el));
-      at = el.dataEnd;
-    }
-    const durationUnits = durationSeconds * 1e9 / timecodeScale;
-    const durationBytes = new Uint8Array(8);
-    new DataView(durationBytes.buffer).setFloat64(0, durationUnits, false);
-    const durationElement = makeElement(new Uint8Array([0x44, 0x89]), durationBytes);
-    const newInfo = makeElement(bytes.subarray(info.idStart, info.idStart + info.idLength), concat([...infoChildren, durationElement]));
-    const rebuiltChildren = children.map(el => el === info ? newInfo : raw(el));
-    const newSegment = makeElement(bytes.subarray(segment.idStart, segment.idStart + segment.idLength), concat(rebuiltChildren));
-    const prefix = bytes.subarray(0, segment.idStart);
-    const suffix = bytes.subarray(segment.dataEnd);
-    return new Blob([prefix, newSegment, suffix], { type: input.type || "video/webm" });
-  } catch (error) {
-    console.warn("Could not repair WebM duration metadata:", error);
-    return input;
-  }
-}
-
-async function ensureVideoDurationMetadata(blob, durationSeconds) {
-  if (!blob || !/webm/i.test(blob.type || "")) return blob;
-  const repaired = patchWebmDuration(await blob.arrayBuffer(), durationSeconds);
-  return repaired instanceof Blob ? repaired : new Blob([repaired], { type: blob.type || "video/webm" });
 }
 
 function languageLabel(code) { return ({en:"English",ar:"العربية",tr:"Türkçe",ur:"اردو",hi:"हिन्दी",fa:"فارسی",ps:"پښتو",ru:"Русский",es:"Español",fr:"Français",de:"Deutsch",id:"Bahasa Indonesia",uz:"O‘zbekcha"})[code] || code || "—"; }
@@ -1327,7 +1227,7 @@ updatePlatformUI();
 updateVideoAnalysisUI();
 
 $("#demoBtn").onclick = () => {
-  $("#brand").value = "بازارک";
+  $("#brand").value = "تبلیغ شما";
   $("#desc").value = "بازارک یک بازار آنلاین برای خرید و فروش کالا، خدمات و آگهی‌ها در افغانستان است. کاربران می‌توانند آگهی ثبت کنند، محصولات مورد نیازشان را پیدا کنند و با فروشنده ارتباط بگیرند.";
   state.language = "fa"; $("#lang").value = "fa"; setDir();
   log("نمونه واقعی بازارک برای شروع سریع وارد شد.", "success");
@@ -1339,8 +1239,8 @@ $("#scriptBtn").onclick = async () => {
   const brand = $("#brand").value.trim(), desc = $("#desc").value.trim();
   const customScript = $("#customScript").value.trim();
   state.customScript = customScript;
-  if (!brand || (state.scriptMode !== "manual" && !desc) || ((state.scriptMode === "manual" || state.scriptMode === "hybrid") && !customScript)) {
-    const msg = state.scriptMode === "manual" ? "نام برند و متن سناریوی اختصاصی را وارد کن." : state.scriptMode === "hybrid" ? "نام برند، توضیح محصول و متن سناریوی خودت را وارد کن." : t("missing");
+  if ((state.scriptMode !== "manual" && !desc) || ((state.scriptMode === "manual" || state.scriptMode === "hybrid") && !customScript)) {
+    const msg = state.scriptMode === "manual" ? "متن سناریوی اختصاصی را وارد کن." : state.scriptMode === "hybrid" ? "توضیحات محصول و متن سناریوی خودت را وارد کن." : t("missing");
     setProgress(0, "اطلاعات ناقص", msg); log(msg, "error"); return;
   }
   state.busy = true; state.generated = false; $("#scriptBtn").disabled = true; $("#renderBtn").disabled = true; $("#downloadBtn").disabled = true;
@@ -1709,20 +1609,13 @@ async function performRender(fromConveyor = false) {
   try {
     setStage(4); setProgress(66, "رندر ویدئو", t("render")); log("رندر فریم‌ها شروع شد.");
     state.lastVideo = await renderVideo(state.voiceBlob);
-    await saveVideoToLibrary(state.lastVideo, { brand: brandText(), platform: state.platform, language: state.language, duration: Math.ceil(state.renderedDurationSeconds || state.duration), durationSeconds: state.renderedDurationSeconds || state.duration, mimeType: state.lastVideo.type || "" }).catch(e => log(`ذخیره در کتابخانه انجام نشد: ${e.message || e}`, "info"));
+    await saveVideoToLibrary(state.lastVideo, { brand: brandText(), platform: state.platform, language: state.language, duration: Math.round(state.duration) }).catch(e => log(`ذخیره در کتابخانه انجام نشد: ${e.message || e}`, "info"));
     await renderVideoLibrary();
     const previewUrl = URL.createObjectURL(state.lastVideo);
     $("#stage").innerHTML = `<video class="final-preview" controls playsinline preload="metadata"></video>`;
     const preview = $("#stage video");
     preview.src = previewUrl;
     preview.load();
-    preview.addEventListener("loadedmetadata", () => {
-      if (Number.isFinite(preview.duration) && preview.duration > 0) {
-        log(`مرورگر مدت ویدئو را ${formatVideoTime(preview.duration)} شناسایی کرد.`, "success");
-      } else {
-        log("مرورگر مدت را از متادیتا نخواند؛ مدت رندر در کتابخانه ثبت شده است.", "info");
-      }
-    }, { once: true });
     preview.addEventListener("error", () => log("مرورگر نتوانست فایل ویدئوی نهایی را پخش کند. فایل را دانلود و با VLC یا پخش‌کننده دیگری باز کن.", "error"), { once: true });
     // Do not force autoplay on mobile; the user can press play safely.
     setStage(4, "done"); setStage(5, "done"); setProgress(100, t("done"), "ویدئوی نهایی آماده است؛ می‌توانی همین‌جا ببینی یا دانلود کنی."); $("#outputState").textContent = "✓ آماده دانلود"; $("#downloadBtn").disabled = false; $("#resultActions").hidden = false; log("ویدئوی نهایی با موفقیت ساخته شد و پیش‌نمایش آماده است.", "success");
@@ -1853,7 +1746,6 @@ async function renderVideo(voiceBlob) {
     const requestedTotal = Math.max(15, Number(state.duration) || 15);
     const voiceDuration = voiceBuf.duration;
     const total = Math.max(requestedTotal, voiceDuration + 0.35) * 1000;
-    state.renderedDurationSeconds = total / 1000;
     if (voiceDuration > requestedTotal + 0.5) {
       log(`گویندگی ${Math.ceil(voiceDuration)} ثانیه است؛ ویدئو برای پخش کامل متن تا ${Math.ceil(total / 1000)} ثانیه ادامه پیدا می‌کند.`, "info");
     }
@@ -2042,12 +1934,8 @@ async function renderVideo(voiceBlob) {
       raf = requestAnimationFrame(tick);
     });
 
-    let blob = await done;
+    const blob = await done;
     if (blob.size < 10000) throw new Error("فایل ویدئو بسیار کوچک یا خالی ساخته شد. دوباره تلاش کن.");
-    // Repair missing duration metadata for WebM so Android gallery/media scanners
-    // can read the true length instead of showing 00:00.
-    blob = await ensureVideoDurationMetadata(blob, total / 1000);
-    log(`مدت واقعی خروجی: ${formatVideoTime(total / 1000)} · قالب: ${blob.type || mime}`, "success");
     return blob;
   } finally {
     try { voiceSource?.stop(); } catch (_) {}

@@ -243,3 +243,129 @@ body{font-size:14px;-webkit-text-size-adjust:100%}
 /* v93: manual "build video" button removed from UI (video is built automatically); download fills the row */
 #renderBtn{display:none!important}
 .output-actions #downloadBtn{flex:1}
+
+/* v93: clean light workspace refresh — layout-only, preserves all controls */
+:root{
+  --bg:#f4f7fc;--panel:#ffffff;--panel2:#f8faff;--line:#e3e9f3;
+  --text:#17233b;--muted:#68758d;--brand:#5b63e8;--pink:#8b5cf6;
+  --green:#159b72;--danger:#dc4962;--glass:rgba(255,255,255,.94);
+}
+html,body,#app{background:#f4f7fc!important;color:#17233b!important}
+body{font-size:14px}
+.app-shell{width:min(1120px,100%);padding:16px 16px 44px}
+.topbar{height:58px;margin-bottom:14px}
+.brandmark{background:linear-gradient(135deg,#5267ed,#9364ed);box-shadow:0 8px 22px #6472e833}
+.brand strong{color:#18243b;font-size:17px}
+.brand span{color:#75819a;font-size:11px}
+.top-badge{background:#eaf8f2;border:1px solid #ccefe0;color:#16845f;font-size:11px}
+.icon-btn{background:#fff;border:1px solid #e0e7f1;color:#53617a}
+.hero-card{min-height:0;padding:22px 24px;margin-bottom:14px;border:1px solid #e0e7f5;border-radius:22px;background:linear-gradient(115deg,#fff 0%,#f1f4ff 62%,#f4edff 100%);box-shadow:0 10px 30px rgba(38,58,105,.06)}
+.hero-card h1{color:#17233b;font-size:clamp(25px,4vw,38px)}
+.hero-card h1 span{background:linear-gradient(90deg,#4f63e8,#925ce8);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero-card p{color:#66748e;font-size:13px}
+.eyebrow{background:#eef0ff;border:1px solid #dfe2ff;color:#5963d9}
+.hero-pills span{background:#fff;border:1px solid #e4e9f4;color:#53617a}
+.hero-phone{border-color:#dce3f2;background:linear-gradient(160deg,#fff,#edf1ff);box-shadow:0 14px 35px #6672d522}
+.hero-phone-top{background:#d7def0}.hero-play{background:linear-gradient(135deg,#5867e9,#9360e9)}
+.workspace-nav{position:relative;top:auto;z-index:5;background:#fff;border:1px solid #e2e8f2;border-radius:18px;box-shadow:0 8px 24px rgba(32,52,92,.06);padding:7px;margin-bottom:14px}
+.workspace-nav-item{color:#68758d;border-radius:13px;min-height:60px}
+.workspace-nav-item>span{background:#f0f3fa;color:#65728c}
+.workspace-nav-item b{color:#43516b;font-size:12px}
+.workspace-nav-item small{color:#8a96aa;font-size:10px}
+.workspace-nav-item:hover{background:#f7f8ff;border-color:#e3e5ff}
+.workspace-nav-item.active{background:#f0f1ff;border-color:#cfd3ff;box-shadow:none}
+.workspace-nav-item.active>span{background:linear-gradient(135deg,#5868e8,#8c62e8);color:#fff;box-shadow:none}
+.workspace-nav-item.active b{color:#3844bd}
+.card{background:#fff!important;border:1px solid #e4eaf3!important;border-radius:18px!important;box-shadow:0 8px 26px rgba(30,50,90,.055)!important;backdrop-filter:none!important}
+.setup,.production,.result,.view-switch,.library{padding:18px}
+.section-head{border-bottom:1px solid #edf0f6;padding-bottom:12px;margin-bottom:15px}
+.section-head h2{color:#1d2a43;font-size:17px}
+.section-head small{color:#8a96aa}
+.step-state,#outputState,#viewState,.state-dot{color:#71809a}
+.field label{color:#35435c;font-size:12px}
+.input,.field textarea,.field select,.custom-script-wrap textarea{background:#fbfcff!important;border:1px solid #dfe6f1!important;color:#1e2b44!important;border-radius:12px!important}
+.input:focus,.field textarea:focus,.field select:focus{border-color:#8790f0!important;box-shadow:0 0 0 3px #6975ed18!important}
+.hint,.drop span,.drop small,.music-drop small,.custom-script-wrap small{color:#7e8ba2}
+.drop{background:#f8faff;border:1.5px dashed #c8d2e4;border-radius:15px}
+.drop:hover{background:#f2f4ff;border-color:#858df0}
+.upload-icon{background:#eceeff;color:#5d68df}
+.asset-item{border-color:#dfe6f1}
+.style-chip,.creation-mode,.scenario-mode{background:#f8faff;border:1px solid #e0e6f1;color:#64718a}
+.style-chip.active,.creation-mode.active,.scenario-mode.active{background:#eff0ff;border-color:#aeb5f7;color:#414bc3;box-shadow:none}
+.style-chip.active i,.scenario-mode.active i{color:#5a65dc}
+.creation-mode small,.creation-mode em{color:#8290a7}
+.build-mode-info,.custom-script-wrap,.custom-script-section{background:#f7f8ff;border:1px solid #e1e5fb;color:#42506a}
+.compact-options{gap:10px}
+.music-drop{background:#f8faff;border:1px solid #e2e8f2;color:#35435c}
+.color-row>span{color:#68758d}
+.subtitle-field{background:#f8f9ff;border:1px solid #e1e6f2}
+.subtitle-opt{background:#fff;border:1px solid #dfe6f1;color:#65718a}
+.subtitle-opt.active{background:#eef0ff;border-color:#8991ef;color:#4d56cb}
+.sub-color{border-color:#d6deeb}.sub-color.active{border-color:#6873e7;box-shadow:0 0 0 3px #6873e722}
+.primary{background:linear-gradient(135deg,#5368e8,#865ee8);box-shadow:0 8px 18px #6570dc25}
+.secondary{background:#f1f4fa;border:1px solid #dce4f0;color:#46536c}
+.ghost{background:#fff;border:1px solid #dce4f0;color:#65718a}
+.progress-card{background:#f8faff;border:1px solid #e5eaf3}
+.progress-top strong{color:#273550}.progress-top small{color:#7b879c}
+.progress-top>b{color:#5966dc}.progress-track{background:#e6eaf3}
+.pipeline-stage{background:#fff;border:1px solid #e4e9f2}.pipeline-stage b{color:#46536b}.pipeline-stage small{color:#8b96a8}
+.pipeline-stage.active{background:#f0f1ff;border-color:#aeb5f5}.stage-number{color:#6874df}
+.script-details,.ops-details{border:1px solid #e4e9f2;background:#fbfcff;border-radius:13px}
+.script-details summary,.ops-details summary{color:#4a5871}
+.script-panel textarea{background:#fff;color:#26334d;border:1px solid #e0e6f0}
+.log{background:#f8faff;border:1px solid #e5eaf3}.log-line{color:#596780}
+.view-tab{background:#f8faff;border:1px solid #e1e7f1;color:#596780}
+.view-tab>span{background:#ecefff;color:#5b66db}.view-tab b{color:#46536b}.view-tab small,.view-hint{color:#8490a4}
+.view-tab.active{background:#eff0ff;border-color:#aeb5f5;box-shadow:none}.view-tab.active b{color:#4650c6}
+.video-stage{background:#111827;border:1px solid #dfe5ef}
+.library-item{background:#fff;border:1px solid #e3e9f2;box-shadow:0 5px 15px rgba(30,50,90,.04)}
+.library-info strong{color:#26334d}.library-info small{color:#8490a4}
+.library-empty{background:#f8faff;border:1px dashed #d5deec;color:#596780}
+.library-empty small{color:#8490a4}
+.workspace-panel[hidden]{display:none!important}
+@media(max-width:760px){
+ .app-shell{padding:9px 10px 30px}
+ .topbar{height:48px;margin-bottom:9px}
+ .hero-card{padding:16px 15px;margin-bottom:10px;border-radius:17px}
+ .hero-card h1{font-size:23px;color:#17233b}
+ .hero-card p{font-size:12px;color:#68758d;line-height:1.7}
+ .hero-pills{gap:5px}.hero-pills span{font-size:10px;padding:5px 8px}
+ .workspace-nav{position:sticky;top:5px;grid-template-columns:repeat(4,minmax(0,1fr));gap:3px;padding:5px;margin-bottom:10px}
+ .workspace-nav-item{min-height:61px;padding:7px 2px;gap:3px}
+ .workspace-nav-item>span{width:30px;height:30px;font-size:15px}
+ .workspace-nav-item b{font-size:10px}
+ .setup,.production,.result,.view-switch,.library{padding:13px;margin-bottom:9px;border-radius:16px!important}
+ .section-head{margin-bottom:12px;padding-bottom:10px}
+ .section-head h2{font-size:16px}
+ .field{margin-bottom:12px}
+ .field label{font-size:12px}
+ .input,.field textarea,.field select{font-size:14px;padding:12px}
+ .field textarea{min-height:105px}
+ .drop{padding:18px 12px}
+ .drop strong{font-size:13px}.drop span{font-size:11px}.drop small{font-size:10px}
+ .platform-grid{grid-template-columns:1fr 1fr}
+ .style-chip{min-height:44px}
+ .style-chip span{font-size:11px}
+ .creation-mode-grid{grid-template-columns:1fr 1fr}
+ .creation-mode{min-height:104px}
+ .stage-grid{grid-template-columns:1fr 1fr}
+ .video-stage{height:min(62vh,440px)}
+ .view-tabs{gap:7px}
+ .view-tab{padding:9px}
+}
+@media(max-width:430px){
+ .app-shell{padding-inline:8px}
+ .hero-card h1{font-size:21px}
+ .workspace-nav-item b{font-size:9.5px}
+ .workspace-nav-item>span{width:28px;height:28px}
+ .creation-mode-grid{grid-template-columns:1fr 1fr}
+ .video-stage{height:min(58vh,390px)}
+}
+/* Keep the default workspace focused; other tools remain one tap away in the category bar. */
+.mobile-workspace{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.mobile-workspace .setup{grid-column:1/-1}
+.mobile-workspace .production{grid-column:1}
+.mobile-workspace .view-switch,.mobile-workspace .result,.mobile-workspace .library{grid-column:1/-1}
+.mobile-workspace.focus-studio .focus-analysis,
+.mobile-workspace.focus-studio .focus-script{display:none!important}
+@media(max-width:760px){.mobile-workspace{display:block}.mobile-workspace .setup,.mobile-workspace .production,.mobile-workspace .result,.mobile-workspace .view-switch,.mobile-workspace .library{width:100%;margin-bottom:9px}}
