@@ -742,7 +742,7 @@ async function aiWorkPool(request, env, ctx) {
     if (phase === "plan") {
       prompt = `You are a production specialist inside AD Maker AI. Continue the work from the shared context below. Do NOT rewrite the entire ad unless needed. Produce a compact production plan that helps a browser renderer finish the video: scene order, which uploaded visual should be used where, subtitle/caption cues, transitions, pacing, and a short QA checklist. Use only verified facts. Return JSON only with keys: scenes, captions, transitions, qa.\n\n${shared}`;
     } else {
-      prompt = `You are one member of a multi-AI advertising team. Build the final spoken advertising script from the shared verified context. Do not invent facts. Make it natural and long enough for ${duration} seconds (about ${targetWords} words). Return ONLY the spoken script, with no headings or notes.\n\n${shared}`;
+      prompt = `You are one member of a multi-AI advertising team. Build the final spoken advertising script from the shared verified context. Do not invent facts. The script is voice-over only: never say or repeat labels such as "Your advertisement", "Your ad", "تبلیغ شما", or any heading/title. Start directly with the actual product/service message. Do not read scene titles, captions, or UI labels aloud. Make it natural and long enough for ${duration} seconds (about ${targetWords} words). Return ONLY the spoken script, with no headings or notes.\n\n${shared}`;
     }
 
     const jobs = [];
@@ -918,7 +918,7 @@ User description: ${b.description}`;
     const code = e?.code || "generation_failed";
     const detail = e?.message || "اتصال به سرویس تولید سناریو ناموفق بود.";
     return json({
-      script: fallback({ brand: b?.brand || "AD Maker AI", description: b?.description || "", language: b?.language || "fa", duration }),
+      script: fallback({ brand: b?.brand || "", description: b?.description || "", language: b?.language || "fa", duration }),
       fallback: true,
       provider: "local",
       error: code,
@@ -1334,24 +1334,22 @@ function arrayBufferToBase64(buf) {
 }
 
 function fallback(b) {
-  const brand = b.brand || "AD Maker AI";
   const desc = b.description || "یک محصول یا خدمت کاربردی";
   const custom = String(b.customScript || "").trim();
   if ((b.scriptMode === "manual" || b.scriptMode === "hybrid") && custom) return custom;
   const duration = Math.max(15, Math.min(300, Number(b.duration) || 15));
   const base = b.language === "en"
-    ? `${brand}. ${desc}. Discover what it can do, understand its value, and see how it can make your experience simpler. ${brand} is designed around the needs described in this advertisement. Explore the details, choose what fits your needs, and take the next step today.`
+    ? `${desc}. Discover its main benefits, understand how it can help, and explore the details to choose what fits your needs. Take the next step today.`
     : b.language === "ps"
-      ? `${brand}. ${desc}. دا اعلان تاسو سره مرسته کوي چې د محصول ارزښت او د کارولو اسانتیا ښه وپېژنئ. هغه ځانګړنې او ګټې وکاروئ چې ستاسو له اړتیا سره برابرې دي، جزئیات وګورئ او د خپلې اړتیا لپاره مناسب انتخاب وکړئ. له ${brand} سره بل ګام همدا اوس واخلئ.`
-      : `${brand}. ${desc}. اینجا هدف این است که شما محصول یا خدمت را ساده و روشن بشناسید و ببینید چگونه می‌تواند بر اساس توضیحات ارائه‌شده برای نیاز شما مفید باشد. مزیت‌های اصلی را بررسی کن، جزئیات را ببین و گزینه مناسب خودت را انتخاب کن. اگر دنبال یک راه ساده و کاربردی هستی، ${brand} را بررسی کن و همین امروز قدم بعدی را بردار.`;
+      ? `${desc}. د دې مهمې ګټې وپېژنئ، د خپلې اړتیا سره یې پرتله کړئ او د نورو معلوماتو لپاره یې جزئیات وګورئ. خپل مناسب انتخاب وکړئ او بل ګام واخلئ.`
+      : `${desc}. با مهم‌ترین مزیت‌ها آشنا شو و ببین چگونه می‌تواند برایت مفید باشد. جزئیات را بررسی کن، آن را با نیاز خودت مقایسه کن و انتخاب مناسب را انجام بده. برای برداشتن قدم بعدی، همین حالا اقدام کن.`;
   if (duration <= 30) return base;
   const extra = b.language === "en"
-    ? ` Take a closer look at the information provided, consider how it fits your situation, and use the available details before making your choice. ${brand} — clear, practical, and ready for your next step.`
+    ? ` Review the available information, consider the benefits for your situation, and make an informed choice.`
     : b.language === "ps"
-      ? ` د ورکړل شوو معلوماتو له مخې جزئیات په پام کې ونیسئ، د خپلې اړتیا سره یې پرتله کړئ او له موجودو معلوماتو څخه د سمې پرېکړې لپاره ګټه واخلئ. ${brand}؛ روښانه، عملي او ستاسو د راتلونکي ګام لپاره چمتو.`
-      : ` توضیحات را با دقت ببین، مزیت‌های گفته‌شده را با نیاز خودت مقایسه کن و پیش از انتخاب از اطلاعات موجود استفاده کن. ${brand}؛ روشن، کاربردی و آماده برای قدم بعدی شما.`;
-  const repeats = Math.min(6, Math.max(1, Math.ceil(duration / 60)));
-  return [base, ...Array.from({ length: repeats }, () => extra)].join(" ");
+      ? ` شته معلومات په دقت وګورئ او د خپلې اړتیا له مخې پرېکړه وکړئ.`
+      : ` اطلاعات را با دقت بررسی کن و با توجه به نیاز خودت تصمیم بگیر.`;
+  return [base, ...Array.from({ length: Math.min(6, Math.max(1, Math.ceil(duration / 60))) }, () => extra)].join(" ");
 }
 
 function json(data, status = 200) {
