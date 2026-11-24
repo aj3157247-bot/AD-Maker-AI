@@ -2,6 +2,7 @@ import "./style.css";
 
 const state = {
   assets: [],
+  assetDurations: [],
   style: "youtube_short",
   platform: "youtube_short",
   language: "en",
@@ -1255,13 +1256,25 @@ function assetPreview() {
       const img = document.createElement("img"); img.src = URL.createObjectURL(f); item.appendChild(img);
     } else { item.innerHTML = `<div class="video-thumb">▶</div>`; }
     item.insertAdjacentHTML("beforeend", `<span>${i + 1}</span><button type="button" aria-label="حذف">×</button>`);
-    item.querySelector("button").onclick = () => { state.assets.splice(i, 1); assetPreview(); };
+    if (f.type.startsWith("image/")) {
+      const timing = document.createElement("label");
+      timing.className = "asset-duration";
+      timing.innerHTML = `مدت نمایش <input type="number" min="1" max="600" step="1" value="${state.assetDurations[i] || 5}" aria-label="مدت نمایش عکس به ثانیه"> ثانیه`;
+      const durationInput = timing.querySelector("input");
+      durationInput.addEventListener("change", () => {
+        state.assetDurations[i] = Math.max(1, Math.min(600, Number(durationInput.value) || 5));
+        durationInput.value = state.assetDurations[i];
+      });
+      item.appendChild(timing);
+    }
+    item.querySelector("button").onclick = () => { state.assets.splice(i, 1); state.assetDurations.splice(i, 1); assetPreview(); };
     wrap.appendChild(item);
   });
 }
 
 $("#files").onchange = e => {
   state.assets = [...e.target.files];
+  state.assetDurations = state.assets.map(f => f.type.startsWith("image/") ? 5 : 0);
   state.videoAnalysis = null;
   assetPreview();
   renderVideoLibrary();
@@ -1425,7 +1438,7 @@ updatePlatformUI();
 updateVideoAnalysisUI();
 
 $("#demoBtn").onclick = () => {
-  $("#brand").value = "تبلیغ شما";
+  $("#brand").value = "";
   $("#desc").value = "بازارک یک بازار آنلاین برای خرید و فروش کالا، خدمات و آگهی‌ها در افغانستان است. کاربران می‌توانند آگهی ثبت کنند، محصولات مورد نیازشان را پیدا کنند و با فروشنده ارتباط بگیرند.";
   state.language = "fa"; $("#lang").value = "fa"; setDir();
   log("نمونه واقعی بازارک برای شروع سریع وارد شد.", "success");
@@ -1848,7 +1861,7 @@ $("#downloadBtn").onclick = () => {
 };
 
 $("#rerenderBtn").onclick = () => $("#renderBtn").click();
-$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.buildMode = "pro"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; state.videoAnalysisJobActive = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".creation-mode").forEach(x => x.classList.toggle("active", x.dataset.buildMode === "pro")); updateBuildModeUI(); $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
+$("#newBtn").onclick = () => { ["#brand", "#desc"].forEach(s => $(s).value = ""); state.assets = []; state.assetDurations = []; state.script = ""; state.customScript = ""; state.scriptMode = "ai"; state.buildMode = "pro"; state.activeView = "preview"; state.voiceBlob = null; state.videoAnalysis = null; state.videoAnalysisBusy = false; state.videoAnalysisJobActive = false; $("#assets").innerHTML = `<span class="asset-empty">هنوز فایلی اضافه نشده</span>`; $("#scriptEditor").value = ""; $("#customScript").value = ""; $("#customScriptWrap").hidden = true; $("#scriptEditor").disabled = true; $(".creation-mode").forEach(x => x.classList.toggle("active", x.dataset.buildMode === "pro")); updateBuildModeUI(); $(".view-tab").forEach(x => x.classList.toggle("active", x.dataset.view === "preview")); $(".workspace-panel").forEach(x => { x.hidden = x.dataset.workspace !== "preview"; }); $("#viewState").textContent = "استودیو"; $("#stage").innerHTML = `<div class="empty"><div>🎞️</div><strong>پیش‌نمایش اینجا نمایش داده می‌شود</strong><small>پس از ساخت، ویدئوی عمودی 9:16 را می‌بینی.</small></div>`; resetPipeline(); };
 $("#clearLog").onclick = () => { $("#log").innerHTML = `<div class="log-line muted"><span>●</span> منتظر عملیات بعدی...</div>`; };
 $("#editScript").onclick = () => { $("#scriptEditor").disabled = false; $("#scriptEditor").focus(); $("#scriptEditor").classList.add("editing"); log("سناریو قابل ویرایش است؛ بعد از ویرایش می‌توانی دوباره رندر کنی."); };
 $("#scriptMore").onclick = () => { const box = $("#scriptEditor"); const details = $(".script-details"); details.open = true; box.classList.toggle("expanded"); $("#scriptMore").textContent = box.classList.contains("expanded") ? "کمتر" : "بیشتر"; if (box.classList.contains("expanded")) { box.style.height = "auto"; box.style.height = `${Math.max(180, box.scrollHeight)}px`; } else box.style.height = "82px"; };
@@ -1893,7 +1906,7 @@ async function renderVideo(voiceBlob) {
     urls.push(objectUrl);
     const prepared = await prepareMediaFile(f, objectUrl);
     if (prepared.kind === "image") {
-      media.push({ type: "image", el: prepared.element, name: f.name, duration: 1 });
+      media.push({ type: "image", el: prepared.element, name: f.name, duration: Math.max(1, Number(state.assetDurations[state.assets.indexOf(f)]) || 5) });
       log(`تصویر «${f.name}» آماده شد.`, "success");
     } else if (prepared.kind === "video") {
       const v = prepared.element;
@@ -1943,7 +1956,8 @@ async function renderVideo(voiceBlob) {
     // the video follows the full narration instead of ending early.
     const requestedTotal = Math.max(15, Number(state.duration) || 15);
     const voiceDuration = voiceBuf.duration;
-    const total = Math.max(requestedTotal, voiceDuration + 0.35) * 1000;
+    const mediaDuration = media.reduce((sum, item) => sum + Math.max(0.1, Number(item.duration) || 0.1), 0);
+    const total = Math.max(requestedTotal, voiceDuration + 0.35, mediaDuration) * 1000;
     if (voiceDuration > requestedTotal + 0.5) {
       log(`گویندگی ${Math.ceil(voiceDuration)} ثانیه است؛ ویدئو برای پخش کامل متن تا ${Math.ceil(total / 1000)} ثانیه ادامه پیدا می‌کند.`, "info");
     }
@@ -1968,7 +1982,13 @@ async function renderVideo(voiceBlob) {
     });
 
     const sceneCount = media.length || 1;
-    const sceneDuration = total / sceneCount;
+    const sceneTimeline = [];
+    let sceneCursor = 0;
+    media.forEach((item, index) => {
+      const durationMs = Math.max(100, Number(item.duration) * 1000 || 5000);
+      sceneTimeline.push({ start: sceneCursor, end: sceneCursor + durationMs, item, index });
+      sceneCursor += durationMs;
+    });
     log(`${sceneCount} صحنه برای ${Math.round(total / 1000)} ثانیه تنظیم شد.`, "success");
     const captions = buildCaptionTimeline(state.script, voiceDuration);
     const start = performance.now();
@@ -1976,9 +1996,8 @@ async function renderVideo(voiceBlob) {
     const sceneAt = elapsed => {
       if (!media.length) return { item: null, index: 0, progress: 0 };
       const safe = Math.min(Math.max(0, elapsed), Math.max(0, total - 1));
-      const raw = safe / sceneDuration;
-      const index = Math.min(sceneCount - 1, Math.floor(raw));
-      return { item: media[index], index, progress: Math.min(1, Math.max(0, raw - index)) };
+      const current = sceneTimeline.find(x => safe < x.end) || sceneTimeline[sceneTimeline.length - 1];
+      return { item: current.item, index: current.index, progress: Math.min(1, Math.max(0, (safe - current.start) / (current.end - current.start))) };
     };
 
     let activeVideoScene = -1;
@@ -2068,15 +2087,9 @@ async function renderVideo(voiceBlob) {
       ctx.direction = state.language === "en" ? "ltr" : "rtl";
       ctx.textAlign = "center";
 
-      // Small brand badge — avoids the huge repeated title seen in the previous output.
-      roundRect(ctx, 38, 44, W - 76, 58, 20, "rgba(8,8,15,.52)", "rgba(255,255,255,.16)");
-      ctx.fillStyle = "#fff"; ctx.font = "800 25px Vazirmatn,Arial";
-      ctx.fillText(brandText(), W / 2, 81);
-
-      // Scene counter.
-      ctx.textAlign = state.language === "en" ? "right" : "left";
-      ctx.fillStyle = "rgba(255,255,255,.76)"; ctx.font = "700 16px Vazirmatn,Arial";
-      ctx.fillText(`${String(scene.index + 1).padStart(2,"0")} / ${String(sceneCount).padStart(2,"0")}`, state.language === "en" ? W - 42 : 42, 138);
+      // No title, brand label, scene counter or automatic text is rendered.
+      // Subtitles are the only text layer and remain opt-in.
+      ctx.textAlign = "center";
 
       // Subtitles: no background box, colored text with outline for readability. Can be turned off.
       if (state.subtitlesOn && caption) {
@@ -2103,8 +2116,6 @@ async function renderVideo(voiceBlob) {
       // Fine progress rail.
       ctx.fillStyle = "rgba(255,255,255,.18)"; roundRect(ctx, 42, H - 88, W - 84, 6, 3, "rgba(255,255,255,.18)", null);
       ctx.fillStyle = state.brandColor; roundRect(ctx, 42, H - 88, (W - 84) * p, 6, 3, state.brandColor, null);
-      ctx.fillStyle = "rgba(255,255,255,.72)"; ctx.font = "700 15px Vazirmatn,Arial";
-      ctx.fillText(`${Math.round(p * 100)}%`, W / 2, H - 50);
       if (elapsed - lastProg > 300) { lastProg = elapsed; setProgress(66 + p * 32, "رندر ویدئو", `${Math.round(p * 100)}٪ از ویدئو ساخته شد`); }
     };
 
@@ -2183,7 +2194,7 @@ function roundRect(ctx, x, y, w, h, r, fill, stroke) {
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
 }
 
-function brandText() { return $("#brand")?.value?.trim() || "AD Maker AI"; }
+function brandText() { return $("#brand")?.value?.trim() || ""; }
 function styleLabel() {
   return platformLabel(state.platform).toUpperCase();
 }

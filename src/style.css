@@ -369,3 +369,9 @@ body{font-size:14px}
 .mobile-workspace.focus-studio .focus-analysis,
 .mobile-workspace.focus-studio .focus-script{display:none!important}
 @media(max-width:760px){.mobile-workspace{display:block}.mobile-workspace .setup,.mobile-workspace .production,.mobile-workspace .result,.mobile-workspace .view-switch,.mobile-workspace .library{width:100%;margin-bottom:9px}}
+
+/* Per-image display duration control */
+.asset-item { width: 118px; height: auto; min-height: 82px; overflow: visible; padding-bottom: 25px; }
+.asset-item img, .asset-item .video-thumb { width: 100%; height: 58px; display: block; object-fit: cover; }
+.asset-item .asset-duration { position: absolute; left: 4px; right: 4px; bottom: 3px; display: flex; align-items: center; justify-content: center; gap: 3px; color: #cbd0dc; font-size: 9px; white-space: nowrap; }
+.asset-item .asset-duration input { width: 38px; min-width: 0; padding: 2px 3px; border: 1px solid #454b5b; border-radius: 5px; background: #0b0d14; color: #fff; text-align: center; font-size: 10px; }
